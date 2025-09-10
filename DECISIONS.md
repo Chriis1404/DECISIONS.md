@@ -27,32 +27,112 @@
 
 
 -----
-## Diagrama Arquitectura Expansión EcoMarket
+# Prototipo EcoMarket: Sucursal Autónoma y Comunicación Asíncrona
 
-```mermaid
-flowchart LR
-    subgraph Central
-        A[API Central]
-    end
-    subgraph Sucursal_1
-        B[API Sucursal 1]
-        C[Base de Datos Local / Caché]
-    end
+## Estructura recomendada
 
-    B -- Notifica ventas, cambios de inventario (eventos asíncronos) --> A
-    A -- Responde con confirmaciones, sincronizaciones periódicas --> B
-    B -- Consulta inventario localmente --> C
-    C -- Actualización local y sincronización eventual --> B
+- `EcoMarket.Central/` — API Centralizada (Node.js + Express)
+- `EcoMarket.Sucursal1/` — API sucursal autónoma (Node.js + Express, inventario en memoria)
+
+---
+
+## 1. EcoMarket.Sucursal1 — Inventario Local & Notificación asíncrona
+
+```javascript name=EcoMarket.Sucursal1/app.js
+const express = require('express');
+const axios = require('axios');
+const app = express();
+app.use(express.json());
+
+// Inventario en memoria
+let inventario = {
+  "manzana": 10,
+  "banana": 20
+};
+
+// Venta local y notificación asíncrona
+app.post('/venta', async (req, res) => {
+  const { producto, cantidad } = req.body;
+  if (!inventario[producto] || inventario[producto] < cantidad) {
+    return res.status(400).json({ error: "Stock insuficiente" });
+  }
+  inventario[producto] -= cantidad;
+
+  // Responde al cliente INMEDIATAMENTE
+  res.json({ ok: true, inventario });
+
+  // Notifica de forma asíncrona a la Central
+  try {
+    await axios.post('http://localhost:4000/sucursal-notificacion', {
+      sucursal: "Sucursal1",
+      producto,
+      cantidad
+    });
+  } catch (err) {
+    // Aquí podrías guardar en una cola local si la central no responde
+    console.error('Error notificando a la central:', err.message);
+  }
+});
+
+// Consulta inventario local
+app.get('/inventario', (req, res) => {
+  res.json(inventario);
+});
+
+app.listen(3000, () => console.log('Sucursal1 corriendo en puerto 3000'));
 ```
 
-**Explicación Flechas:**  
-- La Sucursal 1 "notifica" a la API Central sus ventas y cambios de inventario mediante eventos asíncronos.  
-- La API Central puede enviar confirmaciones o realizar sincronizaciones periódicas hacia la sucursal.  
-- Las consultas de inventario en la sucursal son principalmente locales (offline-first), evitando dependencia inmediata de la central.
+---
 
+## 2. EcoMarket.Central — Recibiendo notificaciones
 
------
-Implementación del Prototipo (60 min):
-Duplica el proyecto de tu API y renómbralo a `EcoMarket.Central` y `EcoMarket.Sucursal1`.
-Haz que la sucursal sea autónoma, gestionando su propio inventario en memoria.
-Implementa una **comunicación asíncrona**: cuando ocurra una venta en la sucursal, actualiza su inventario local al instante y luego envía una notificación a la API Central para actualizar el inventario global.
+```javascript name=EcoMarket.Central/app.js
+const express = require('express');
+const app = express();
+app.use(express.json());
+
+// Inventario global (simulado)
+let inventarioGlobal = {
+  "manzana": 100,
+  "banana": 200
+};
+
+app.post('/sucursal-notificacion', (req, res) => {
+  const { sucursal, producto, cantidad } = req.body;
+  if (!inventarioGlobal[producto] || inventarioGlobal[producto] < cantidad) {
+    return res.status(400).json({ error: "Stock global insuficiente" });
+  }
+  inventarioGlobal[producto] -= cantidad;
+  console.log(`Notificación recibida de ${sucursal}: -${cantidad} ${producto}`);
+  res.json({ ok: true, inventarioGlobal });
+});
+
+app.get('/inventario-global', (req, res) => {
+  res.json(inventarioGlobal);
+});
+
+app.listen(4000, () => console.log('Central corriendo en puerto 4000'));
+```
+
+---
+
+## 3. Flujo de comunicación
+
+- **Venta en Sucursal1:**  
+  - Actualiza inventario local instantáneamente.
+  - Notifica a Central mediante POST asíncrono.
+- **Central:**  
+  - Actualiza inventario global.
+  - Puede implementar lógica de reconciliación y reportes.
+
+---
+
+## 4. Principios implementados
+
+- **Autonomía local:** Sucursal opera su propio inventario.
+- **Comunicación asíncrona:** La venta no espera confirmación de la Central.
+- **Offline-first:** Sucursal puede seguir vendiendo aunque la Central esté caída (puedes mejorar con una cola o reintentos).
+
+---
+
+¿Necesitas estructura de carpetas, Docker, integración con base de datos, pruebas, o algo más avanzado? ¡Avísame!
