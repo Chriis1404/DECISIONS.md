@@ -24,3 +24,28 @@
 *   **Justificación**: Empresas líderes en el sector implementan cachés locales para acelerar la consulta de datos y minimizar el impacto de la latencia en la red.
 *   **Riesgo que Mitigaremos**: Experiencia de usuario degradada por esperas prolongadas o caídas en el servicio por saturación de la red.
 *   **Justificación**: La consulta local permite respuestas inmediatas y el sistema se encarga de actualizar los datos en segundo plano, logrando un balance entre velocidad y consistencia.
+
+
+-----
+## Diagrama Arquitectura Expansión EcoMarket
+
+```mermaid
+flowchart LR
+    subgraph Central
+        A[API Central]
+    end
+    subgraph Sucursal_1
+        B[API Sucursal 1]
+        C[Base de Datos Local / Caché]
+    end
+
+    B -- Notifica ventas, cambios de inventario (eventos asíncronos) --> A
+    A -- Responde con confirmaciones, sincronizaciones periódicas --> B
+    B -- Consulta inventario localmente --> C
+    C -- Actualización local y sincronización eventual --> B
+```
+
+**Explicación Flechas:**  
+- La Sucursal 1 "notifica" a la API Central sus ventas y cambios de inventario mediante eventos asíncronos.  
+- La API Central puede enviar confirmaciones o realizar sincronizaciones periódicas hacia la sucursal.  
+- Las consultas de inventario en la sucursal son principalmente locales (offline-first), evitando dependencia inmediata de la central.
