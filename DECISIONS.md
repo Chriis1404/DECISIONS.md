@@ -49,3 +49,10 @@ flowchart LR
 - La Sucursal 1 "notifica" a la API Central sus ventas y cambios de inventario mediante eventos asíncronos.  
 - La API Central puede enviar confirmaciones o realizar sincronizaciones periódicas hacia la sucursal.  
 - Las consultas de inventario en la sucursal son principalmente locales (offline-first), evitando dependencia inmediata de la central.
+
+
+-----
+Implementación del Prototipo (60 min):
+Duplica el proyecto de tu API y renómbralo a `EcoMarket.Central` y `EcoMarket.Sucursal1`.
+Haz que la sucursal sea autónoma, gestionando su propio inventario en memoria.
+Implementa una **comunicación asíncrona**: cuando ocurra una venta en la sucursal, actualiza su inventario local al instante y luego envía una notificación a la API Central para actualizar el inventario global.
