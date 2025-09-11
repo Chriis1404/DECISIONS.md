@@ -64,81 +64,89 @@ flowchart LR
 
 ## 1. EcoMarket.Sucursal1 — Inventario Local & Notificación asíncrona
 
-```javascript name=EcoMarket.Sucursal1/app.js
-const express = require('express');
-const axios = require('axios');
-const app = express();
-app.use(express.json());
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import httpx
 
-// Inventario en memoria
-let inventario = {
-  "manzana": 10,
-  "banana": 20
-};
+app = FastAPI()
 
-// Venta local y notificación asíncrona
-app.post('/venta', async (req, res) => {
-  const { producto, cantidad } = req.body;
-  if (!inventario[producto] || inventario[producto] < cantidad) {
-    return res.status(400).json({ error: "Stock insuficiente" });
-  }
-  inventario[producto] -= cantidad;
+# Inventario en memoria
+inventario = {
+    "manzana": 10,
+    "banana": 20
+}
 
-  // Responde al cliente INMEDIATAMENTE
-  res.json({ ok: true, inventario });
+class Venta(BaseModel):
+    producto: str
+    cantidad: int
 
-  // Notifica de forma asíncrona a la Central
-  try {
-    await axios.post('http://localhost:4000/sucursal-notificacion', {
-      sucursal: "Sucursal1",
-      producto,
-      cantidad
-    });
-  } catch (err) {
-    // Aquí podrías guardar en una cola local si la central no responde
-    console.error('Error notificando a la central:', err.message);
-  }
-});
+@app.post("/venta")
+async def registrar_venta(venta: Venta):
+    producto = venta.producto
+    cantidad = venta.cantidad
 
-// Consulta inventario local
-app.get('/inventario', (req, res) => {
-  res.json(inventario);
-});
+    if producto not in inventario or inventario[producto] < cantidad:
+        raise HTTPException(status_code=400, detail="Stock insuficiente")
 
-app.listen(3000, () => console.log('Sucursal1 corriendo en puerto 3000'));
-```
+    inventario[producto] -= cantidad
 
+    # Responde al cliente INMEDIATAMENTE
+    response = {"ok": True, "inventario": inventario}
+
+    # Notifica de forma asíncrona a la Central
+    async with httpx.AsyncClient() as client:
+        try:
+            await client.post("http://localhost:4000/sucursal-notificacion", json={
+                "sucursal": "Sucursal1",
+                "producto": producto,
+                "cantidad": cantidad
+            })
+        except Exception as e:
+            # Aquí podrías guardar en una cola local si la central no responde
+            print("Error notificando a la central:", str(e))
+
+    return response
+
+@app.get("/inventario")
+async def obtener_inventario():
+    return inventario
+    
 ---
 
 ## 2. EcoMarket.Central — Recibiendo notificaciones
 
-```javascript name=EcoMarket.Central/app.js
-const express = require('express');
-const app = express();
-app.use(express.json());
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
-// Inventario global (simulado)
-let inventarioGlobal = {
-  "manzana": 100,
-  "banana": 200
-};
+app = FastAPI()
 
-app.post('/sucursal-notificacion', (req, res) => {
-  const { sucursal, producto, cantidad } = req.body;
-  if (!inventarioGlobal[producto] || inventarioGlobal[producto] < cantidad) {
-    return res.status(400).json({ error: "Stock global insuficiente" });
-  }
-  inventarioGlobal[producto] -= cantidad;
-  console.log(`Notificación recibida de ${sucursal}: -${cantidad} ${producto}`);
-  res.json({ ok: true, inventarioGlobal });
-});
+# Inventario global (simulado)
+inventario_global = {
+    "manzana": 100,
+    "banana": 200
+}
 
-app.get('/inventario-global', (req, res) => {
-  res.json(inventarioGlobal);
-});
+class Notificacion(BaseModel):
+    sucursal: str
+    producto: str
+    cantidad: int
 
-app.listen(4000, () => console.log('Central corriendo en puerto 4000'));
-```
+@app.post("/sucursal-notificacion")
+async def recibir_notificacion(n: Notificacion):
+    producto = n.producto
+    cantidad = n.cantidad
+
+    if producto not in inventario_global or inventario_global[producto] < cantidad:
+        raise HTTPException(status_code=400, detail="Stock global insuficiente")
+
+    inventario_global[producto] -= cantidad
+    print(f"Notificación recibida de {n.sucursal}: -{cantidad} {producto}")
+
+    return {"ok": True, "inventarioGlobal": inventario_global}
+
+@app.get("/inventario-global")
+async def obtener_inventario_global():
+    return inventario_global
 
 ---
 
