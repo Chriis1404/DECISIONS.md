@@ -57,16 +57,26 @@ flowchart LR
 
 ## Estructura recomendada
 
-- `EcoMarket.Central/` — API Centralizada (Node.js + Express)
-- `EcoMarket.Sucursal1/` — API sucursal autónoma (Node.js + Express, inventario en memoria)
+```
+EcoMarket/
+│
+├── Central/
+│   └── main.py
+│
+└── Sucursal1/
+    └── main.py
+```
 
 ---
 
 ## 1. EcoMarket.Sucursal1 — Inventario Local & Notificación asíncrona
 
+```python
+# filepath: EcoMarket/Sucursal1/main.py
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import httpx
+import asyncio
 
 app = FastAPI()
 
@@ -91,30 +101,34 @@ async def registrar_venta(venta: Venta):
     inventario[producto] -= cantidad
 
     # Responde al cliente INMEDIATAMENTE
-    response = {"ok": True, "inventario": inventario}
+    response = {"ok": True, "inventario": inventario.copy()}
 
     # Notifica de forma asíncrona a la Central
-    async with httpx.AsyncClient() as client:
-        try:
-            await client.post("http://localhost:4000/sucursal-notificacion", json={
-                "sucursal": "Sucursal1",
-                "producto": producto,
-                "cantidad": cantidad
-            })
-        except Exception as e:
-            # Aquí podrías guardar en una cola local si la central no responde
-            print("Error notificando a la central:", str(e))
+    async def notificar():
+        async with httpx.AsyncClient() as client:
+            try:
+                await client.post("http://localhost:4000/sucursal-notificacion", json={
+                    "sucursal": "Sucursal1",
+                    "producto": producto,
+                    "cantidad": cantidad
+                })
+            except Exception as e:
+                print("Error notificando a la central:", str(e))
+    asyncio.create_task(notificar())
 
     return response
 
 @app.get("/inventario")
 async def obtener_inventario():
     return inventario
-    
+```
+
 ---
 
 ## 2. EcoMarket.Central — Recibiendo notificaciones
 
+```python
+# filepath: EcoMarket/Central/main.py
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
@@ -142,11 +156,12 @@ async def recibir_notificacion(n: Notificacion):
     inventario_global[producto] -= cantidad
     print(f"Notificación recibida de {n.sucursal}: -{cantidad} {producto}")
 
-    return {"ok": True, "inventarioGlobal": inventario_global}
+    return {"ok": True, "inventarioGlobal": inventario_global.copy()}
 
 @app.get("/inventario-global")
 async def obtener_inventario_global():
     return inventario_global
+```
 
 ---
 
@@ -168,5 +183,3 @@ async def obtener_inventario_global():
 - **Offline-first:** Sucursal puede seguir vendiendo aunque la Central esté caída (puedes mejorar con una cola o reintentos).
 
 ---
-
-¿Necesitas estructura de carpetas, Docker, integración con base de datos, pruebas, o algo más avanzado? ¡Avísame!
