@@ -197,6 +197,8 @@ async def obtener_inventario_global():
 - Cola local para almacenar transacciones pendientes.
 - Reconciliación periódica para detectar y resolver diferencias.
 
+---
+
 ## 6 . Trade-off Aceptado
 
 **✅ Ganamos**
