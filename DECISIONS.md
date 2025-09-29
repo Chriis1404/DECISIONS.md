@@ -183,3 +183,28 @@ async def obtener_inventario_global():
 - **Offline-first:** Sucursal puede seguir vendiendo aunque la Central esté caída (puedes mejorar con una cola o reintentos).
 
 ---
+
+## 5. Estrategia de Consistencia
+
+**Modelo Adoptado: Consistencia Eventual**
+
+- Cada sucursal mantiene su inventario de forma local e independiente.
+- Los cambios se notifican a la central de forma asíncrona (no bloquean la venta).
+- La central realiza sincronización periódica y conciliación de inventarios.
+
+**Mecanismos de Soporte**
+- Reintentos automáticos de notificación en caso de falla de red.
+- Cola local para almacenar transacciones pendientes.
+- Reconciliación periódica para detectar y resolver diferencias.
+
+## 6 . Trade-off Aceptado
+
+**✅ Ganamos**
+- Velocidad en el punto de venta (respuestas inmediatas).
+- Autonomía de cada sucursal (offline-first).
+- Escalabilidad (más sucursales sin sobrecargar la central).
+
+**⚠️ Aceptamos**
+- Posibles discrepancias temporales en inventario.
+- Casos de sobreventa que requieren gestión posterior con el cliente.
+- Complejidad técnica mayor para reconciliación y monitoreo
