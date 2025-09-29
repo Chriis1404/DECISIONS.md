@@ -439,7 +439,9 @@ async def dashboard():
         f"<td>{n.branch_id}</td>"
         f"<td>{central_inventory[n.product_id].name}</td>"
         f"<td>{n.quantity_sold}</td>"
-        f"<td>${n.sale_price}</td></tr>"
+        f"<td>${n.sale_price}</td>"
+        f"<td>${central_inventory[n.product_id].price * n.quantity_sold}</td>"
+        f"<td>${(n.sale_price - (central_inventory[n.product_id].price * n.quantity_sold))}</td></tr>"
         for n in sales_notifications
     ])
     
@@ -465,7 +467,7 @@ async def dashboard():
             
             <h2>Historial de Ventas</h2>
             <table>
-                <tr><th>Fecha</th><th>Sucursal</th><th>Producto</th><th>Cantidad</th><th>Monto</th></tr>
+                <tr><th>Fecha</th><th>Sucursal</th><th>Producto</th><th>Cantidad</th><th>Monto</th><th>Total</th><th>Cambio</th></tr>
                 {notifications_html}
             </table>
 
