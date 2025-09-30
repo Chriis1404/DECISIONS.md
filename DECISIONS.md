@@ -71,9 +71,8 @@ EcoMarket/
 
 ## 1. EcoMarket.Sucursal1 — Inventario Local, Notificación asíncrona, CRUD de inventario, ventas autónomas & Circuit Breaker
 
-```python
-# filepath: EcoMarket/Sucursal1/SucursalAPI.py
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+```python# filepath: EcoMarket/Sucursal/SucursalAPI.py
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Form
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import Dict, List, Optional
@@ -81,6 +80,7 @@ from datetime import datetime, timedelta
 import httpx
 import logging
 from enum import Enum
+import asyncio
 
 # ===== LOGGING =====
 logging.basicConfig(level=logging.INFO)
@@ -88,14 +88,9 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="🌿 EcoMarket Sucursal API",
-    description="""
-    **Gestión de inventario y ventas autónomas**  
-    - CRUD de inventario  
-    - Ventas locales  
-    - Notificaciones al central con Circuit Breaker
-    """,
-    version="1.3.0",
-    docs_url="/",
+    description="Gestión de inventario y ventas con notificación a central",
+    version="3.1.0",
+    docs_url="/docs",
     redoc_url=None
 )
 
@@ -113,13 +108,16 @@ class Product(BaseModel):
 class SaleRequest(BaseModel):
     product_id: int
     quantity: int
-    customer_info: Optional[str] = None
+    money_received: float
 
 class SaleResponse(BaseModel):
     sale_id: str
+    product_id: int
     product_name: str
     quantity_sold: int
     total_amount: float
+    money_received: float
+    change: float
     timestamp: datetime
     status: str
 
@@ -178,32 +176,29 @@ local_inventory: Dict[int, Product] = {
 sales_history: List[SaleResponse] = []
 
 # ===== FUNCIONES =====
-async def notify_central_about_sale(product_id: int, quantity_sold: int, timestamp: datetime, sale_amount: float):
+async def notify_central_about_sale(sale: SaleResponse):
     notification = {
         "branch_id": BRANCH_ID,
-        "product_id": product_id,
-        "quantity_sold": quantity_sold,
-        "timestamp": timestamp.isoformat(),
-        "sale_price": sale_amount
+        "product_id": sale.product_id,
+        "quantity_sold": sale.quantity_sold,
+        "money_received": sale.money_received,
+        "total_amount": sale.total_amount,
+        "change": sale.change,
+        "timestamp": sale.timestamp.isoformat()
     }
+
     async with httpx.AsyncClient(timeout=5.0) as client:
         response = await client.post(f"{CENTRAL_API_URL}/sale-notification", json=notification)
         if response.status_code != 200:
             raise Exception(f"Error al notificar central: {response.status_code}")
 
-async def send_notification_with_circuit_breaker(product_id: int, quantity_sold: int, timestamp: datetime, sale_amount: float):
+async def send_notification_with_circuit_breaker(sale: SaleResponse):
     try:
-        await circuit_breaker.call(
-            notify_central_about_sale,
-            product_id,
-            quantity_sold,
-            timestamp,
-            sale_amount
-        )
+        await circuit_breaker.call(notify_central_about_sale, sale)
     except Exception as e:
         logger.error(f"⚠️ Notificación no enviada (CircuitBreaker): {e}")
 
-# ===== ENDPOINTS CRUD INVENTARIO =====
+# ===== INVENTARIO (SOLO LECTURA) =====
 @app.get("/inventory", response_model=List[Product], tags=["Inventario"])
 async def get_local_inventory():
     return list(local_inventory.values())
@@ -214,28 +209,7 @@ async def get_product(product_id: int):
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     return local_inventory[product_id]
 
-@app.post("/inventory", response_model=Product, tags=["Inventario"])
-async def add_product(product: Product):
-    if product.id in local_inventory:
-        raise HTTPException(status_code=400, detail="El producto ya existe")
-    local_inventory[product.id] = product
-    return product
-
-@app.put("/inventory/{product_id}", response_model=Product, tags=["Inventario"])
-async def update_product(product_id: int, product: Product):
-    if product_id not in local_inventory:
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
-    local_inventory[product_id] = product
-    return product
-
-@app.delete("/inventory/{product_id}", tags=["Inventario"])
-async def delete_product(product_id: int):
-    if product_id not in local_inventory:
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
-    removed = local_inventory.pop(product_id)
-    return {"eliminado": removed.name, "id": removed.id}
-
-# ===== ENDPOINTS VENTAS =====
+# ===== VENTAS API =====
 @app.post("/sales", response_model=SaleResponse, tags=["Ventas"])
 async def process_sale(sale_request: SaleRequest, background_tasks: BackgroundTasks):
     if sale_request.product_id not in local_inventory:
@@ -247,24 +221,22 @@ async def process_sale(sale_request: SaleRequest, background_tasks: BackgroundTa
     product.stock -= sale_request.quantity
     sale_timestamp = datetime.now()
     total_amount = product.price * sale_request.quantity
+    change = sale_request.money_received - total_amount
 
     sale_response = SaleResponse(
         sale_id=f"{BRANCH_ID}_{sale_timestamp.isoformat()}",
+        product_id=product.id,
         product_name=product.name,
         quantity_sold=sale_request.quantity,
         total_amount=total_amount,
+        money_received=sale_request.money_received,
+        change=change,
         timestamp=sale_timestamp,
         status="completed"
     )
     sales_history.append(sale_response)
 
-    background_tasks.add_task(
-        send_notification_with_circuit_breaker,
-        sale_request.product_id,
-        sale_request.quantity,
-        sale_timestamp,
-        total_amount
-    )
+    background_tasks.add_task(send_notification_with_circuit_breaker, sale_response)
 
     return sale_response
 
@@ -279,46 +251,135 @@ async def sales_stats():
         "average_sale": round(total_revenue / len(sales_history), 2)
     }
 
-# ===== INTERFAZ HTML SIMPLE =====
+# ===== DASHBOARD =====
 @app.get("/dashboard", response_class=HTMLResponse, tags=["Dashboard"])
 async def dashboard():
-    inventory_html = "".join([f"<li>{p.id} - {p.name}: ${p.price} x {p.stock} unidades</li>" for p in local_inventory.values()])
-    sales_html = "".join([f"<li>{s.sale_id} - {s.product_name} x{s.quantity_sold} = ${s.total_amount}</li>" for s in sales_history])
-    
+    inventory_html = "".join([
+        f"<tr><td>{p.id}</td><td>{p.name}</td><td>${p.price}</td><td>{p.stock}</td></tr>"
+        for p in local_inventory.values()
+    ])
+
+    sales_html = "".join([
+        f"<tr><td>{s.timestamp.strftime('%Y-%m-%d %H:%M:%S')}</td>"
+        f"<td>{BRANCH_ID}</td>"
+        f"<td>{s.product_name}</td>"
+        f"<td>{s.quantity_sold}</td>"
+        f"<td>${s.money_received}</td>"
+        f"<td>${s.total_amount}</td>"
+        f"<td>${s.change}</td></tr>"
+        for s in sales_history
+    ])
+
     return f"""
     <html>
         <head>
             <title>🌿 EcoMarket Sucursal Dashboard</title>
+            <style>
+                body {{ font-family: Arial; }}
+                table {{ border-collapse: collapse; width: 80%; margin-bottom: 30px; }}
+                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                th {{ background-color: #4CAF50; color: white; }}
+                input, button, select {{ padding: 5px; margin: 5px 0; }}
+                button {{ background-color: #4CAF50; color: white; border: none; cursor: pointer; }}
+                button:hover {{ background-color: #45a049; }}
+                a.button {{ display:inline-block; padding:8px 15px; margin:5px; background:#4CAF50; color:#fff; text-decoration:none; border-radius:5px; }}
+                a.button:hover {{ background:#45a049; }}
+            </style>
         </head>
-        <body style="font-family:Arial;">
-            <h1>EcoMarket Sucursal - Dashboard</h1>
+        <body>
+            <h1>EcoMarket Sucursal Dashboard</h1>
             <p><b>Branch:</b> {BRANCH_ID}</p>
-            <p><b>Status:</b> Operational - Autonomous</p>
+            <p><b>Status:</b> Operational</p>
             <p><b>Circuit Breaker:</b> {circuit_breaker.state.value} (Failures: {circuit_breaker.failure_count})</p>
-            
-            <h2>Inventario Local</h2>
-            <ul>{inventory_html}</ul>
-            
+
+            <h2>Acciones</h2>
+            <a class="button" href="/submit-sale-form">➕ Registrar Nueva Venta</a>
+
+            <h2>Inventario Local (solo lectura)</h2>
+            <table>
+                <tr><th>ID</th><th>Producto</th><th>Precio</th><th>Stock</th></tr>
+                {inventory_html}
+            </table>
+
             <h2>Ventas Realizadas</h2>
-            <ul>{sales_html}</ul>
+            <table>
+                <tr><th>Fecha</th><th>Sucursal</th><th>Producto</th><th>Cantidad</th><th>Recibido</th><th>Total</th><th>Cambio</th></tr>
+                {sales_html}
+            </table>
         </body>
     </html>
     """
 
-# ===== ENDPOINT GENERAL =====
+# ===== FORMULARIO DE VENTAS =====
+@app.get("/submit-sale-form", response_class=HTMLResponse)
+async def submit_sale_page():
+    options_html = "".join([f"<option value='{p.id}'>{p.name}</option>" for p in local_inventory.values()])
+    return f"""
+    <h1>Registrar Nueva Venta</h1>
+    <form action="/submit-sale" method="post">
+        <label>Producto:</label><br>
+        <select name="product_id">{options_html}</select><br>
+        <label>Cantidad:</label><br><input type="number" name="quantity" value="1" min="1" required><br>
+        <label>Dinero Recibido:</label><br><input type="number" step="0.01" name="money_received" value="0.0" required><br><br>
+        <button type="submit">Enviar Venta</button>
+    </form>
+    <a href="/dashboard">Volver</a>
+    """
+
+@app.post("/submit-sale", response_class=HTMLResponse, tags=["Dashboard"])
+async def submit_sale_form(
+    product_id: int = Form(...),
+    quantity: int = Form(...),
+    money_received: float = Form(...)
+):
+    if product_id not in local_inventory:
+        return HTMLResponse(content="<h3>❌ Producto no encontrado.</h3><a href='/dashboard'>Volver</a>")
+
+    product = local_inventory[product_id]
+    if product.stock < quantity:
+        return HTMLResponse(content=f"<h3>❌ Stock insuficiente. Disponible: {product.stock}</h3><a href='/dashboard'>Volver</a>")
+
+    product.stock -= quantity
+    sale_timestamp = datetime.now()
+    total_amount = product.price * quantity
+    change = money_received - total_amount
+
+    sale = SaleResponse(
+        sale_id=f"{BRANCH_ID}_{sale_timestamp.isoformat()}",
+        product_id=product.id,
+        product_name=product.name,
+        quantity_sold=quantity,
+        total_amount=total_amount,
+        money_received=money_received,
+        change=change,
+        timestamp=sale_timestamp,
+        status="completed"
+    )
+    sales_history.append(sale)
+
+    asyncio.create_task(send_notification_with_circuit_breaker(sale))
+
+    return HTMLResponse(content=f"""
+        <h3>✅ Venta registrada correctamente!</h3>
+        <p>{quantity}x {product.name} vendidos por ${total_amount}</p>
+        <p><b>Dinero recibido:</b> ${money_received}</p>
+        <p><b>Cambio:</b> ${change}</p>
+        <a href="/dashboard">Volver al Dashboard</a>
+    """)
+
+# ===== ROOT =====
 @app.get("/", tags=["General"])
 async def root():
     return {
         "service": "🌿 EcoMarket Sucursal API",
         "branch_id": BRANCH_ID,
-        "status": "operational - AUTONOMOUS",
+        "status": "operational",
         "total_products": len(local_inventory),
         "total_sales": len(sales_history),
         "circuit_breaker_state": circuit_breaker.state.value,
         "circuit_failures": circuit_breaker.failure_count
     }
 
-# ===== MAIN =====
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
@@ -328,14 +389,15 @@ if __name__ == "__main__":
 
 ## 2. EcoMarket.Central — Recibiendo notificaciones, completo con Dashboard y CRUD
 
-```python
-# filepath: EcoMarket/Central/CentralAPI.py
+```python# filepath: EcoMarket/Central/CentralAPI.py
 from fastapi import FastAPI, HTTPException, Form
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
-from typing import Dict, List
+from pydantic import BaseModel, field_validator
+from typing import Dict, List, Union
 from datetime import datetime
 import logging
+import httpx
+import asyncio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -343,10 +405,16 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="🌿 EcoMarket Central API",
     description="Servidor central que gestiona inventario maestro y recibe notificaciones de sucursales.",
-    version="1.2.0",
+    version="3.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+# ===== CONFIGURACIÓN =====
+BRANCHES = [
+    "http://localhost:8001",  # sucursal 1
+    # aquí podrías agregar más sucursales
+]
 
 # ===== MODELOS =====
 class Product(BaseModel):
@@ -359,8 +427,19 @@ class SaleNotification(BaseModel):
     branch_id: str
     product_id: int
     quantity_sold: int
-    timestamp: datetime
-    sale_price: float
+    timestamp: Union[datetime, str]
+    money_received: float
+    total_amount: float
+    change: float
+
+    @field_validator("timestamp", mode="before")
+    def parse_timestamp(cls, v):
+        if isinstance(v, str):
+            return datetime.fromisoformat(v)
+        return v
+    
+    class Config:
+        extra = "ignore" 
 
 # ===== INVENTARIO CENTRAL =====
 central_inventory: Dict[int, Product] = {
@@ -374,7 +453,28 @@ central_inventory: Dict[int, Product] = {
 # ===== HISTORIAL DE VENTAS =====
 sales_notifications: List[SaleNotification] = []
 
-# ===== ENDPOINTS PRINCIPALES =====
+# ===== FUNCIONES DE SINCRONIZACIÓN =====
+async def sync_with_branches(method: str, endpoint: str, data: dict = None):
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        tasks = []
+        for branch in BRANCHES:
+            url = f"{branch}{endpoint}"
+            if method == "POST":
+                tasks.append(client.post(url, json=data))
+            elif method == "PUT":
+                tasks.append(client.put(url, json=data))
+            elif method == "DELETE":
+                tasks.append(client.delete(url))
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for branch, res in zip(BRANCHES, results):
+            if isinstance(res, Exception):
+                logger.error(f"❌ Error al sincronizar con {branch}: {res}")
+            elif res.status_code >= 400:
+                logger.error(f"⚠️ Sucursal {branch} devolvió {res.status_code}")
+            else:
+                logger.info(f"✅ Sincronizado con {branch} ({endpoint})")
+
+# ===== ENDPOINTS GENERALES =====
 @app.get("/", tags=["General"])
 async def root():
     return {
@@ -384,6 +484,7 @@ async def root():
         "total_notifications": len(sales_notifications)
     }
 
+# ===== INVENTARIO =====
 @app.get("/inventory", response_model=List[Product], tags=["Inventario"])
 async def get_inventory():
     return list(central_inventory.values())
@@ -393,6 +494,9 @@ async def add_product(product: Product):
     if product.id in central_inventory:
         raise HTTPException(status_code=400, detail="El producto ya existe")
     central_inventory[product.id] = product
+
+    # 🔄 Sincronizar a sucursales
+    asyncio.create_task(sync_with_branches("POST", "/inventory", product.dict()))
     return product
 
 @app.put("/inventory/{product_id}", response_model=Product, tags=["Inventario"])
@@ -400,6 +504,9 @@ async def update_product(product_id: int, product: Product):
     if product_id not in central_inventory:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     central_inventory[product_id] = product
+
+    # 🔄 Sincronizar a sucursales
+    asyncio.create_task(sync_with_branches("PUT", f"/inventory/{product_id}", product.dict()))
     return product
 
 @app.delete("/inventory/{product_id}", tags=["Inventario"])
@@ -407,6 +514,9 @@ async def delete_product(product_id: int):
     if product_id not in central_inventory:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     removed = central_inventory.pop(product_id)
+
+    # 🔄 Sincronizar a sucursales
+    asyncio.create_task(sync_with_branches("DELETE", f"/inventory/{product_id}"))
     return {"removed": removed.name, "id": removed.id}
 
 # ===== NOTIFICACIONES DE VENTAS =====
@@ -415,13 +525,13 @@ async def receive_sale(notification: SaleNotification):
     if notification.product_id not in central_inventory:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     
-    # Actualizar inventario
     product = central_inventory[notification.product_id]
     product.stock = max(0, product.stock - notification.quantity_sold)
 
-    # Guardar notificación en historial
     sales_notifications.append(notification)
-    logger.info(f"📦 Venta recibida: {notification.branch_id} - {notification.product_id} x{notification.quantity_sold}")
+    logger.info(f"📦 Venta recibida: {notification.branch_id} - "
+                f"{notification.quantity_sold}x {product.name} | "
+                f"Recibido={notification.money_received}, Total={notification.total_amount}, Cambio={notification.change}")
     
     return {
         "status": "received",
@@ -429,19 +539,23 @@ async def receive_sale(notification: SaleNotification):
         "updated_stock": product.stock
     }
 
-# ===== DASHBOARD HTML =====
+# ===== DASHBOARD =====
 @app.get("/dashboard", response_class=HTMLResponse, tags=["Dashboard"])
 async def dashboard():
-    inventory_html = "".join([f"<tr><td>{p.id}</td><td>{p.name}</td><td>${p.price}</td><td>{p.stock}</td></tr>" for p in central_inventory.values()])
+    inventory_html = "".join([
+        f"<tr><td>{p.id}</td><td>{p.name}</td><td>${p.price}</td><td>{p.stock}</td>"
+        f"<td><a href='/edit-product/{p.id}'>✏️ Editar</a> | <a href='/delete-product/{p.id}'>🗑️ Eliminar</a></td></tr>"
+        for p in central_inventory.values()
+    ])
     
     notifications_html = "".join([
         f"<tr><td>{n.timestamp.strftime('%Y-%m-%d %H:%M:%S')}</td>"
         f"<td>{n.branch_id}</td>"
-        f"<td>{central_inventory[n.product_id].name}</td>"
+        f"<td>{central_inventory[n.product_id].name if n.product_id in central_inventory else '❓'}</td>"
         f"<td>{n.quantity_sold}</td>"
-        f"<td>${n.sale_price}</td>"
-        f"<td>${central_inventory[n.product_id].price * n.quantity_sold}</td>"
-        f"<td>${(n.sale_price - (central_inventory[n.product_id].price * n.quantity_sold))}</td></tr>"
+        f"<td>${n.money_received}</td>"
+        f"<td>${n.total_amount}</td>"
+        f"<td>${n.change}</td></tr>"
         for n in sales_notifications
     ])
     
@@ -454,32 +568,94 @@ async def dashboard():
                 table {{ border-collapse: collapse; width: 80%; margin-bottom: 30px; }}
                 th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
                 th {{ background-color: #4CAF50; color: white; }}
+                input, button, select {{ padding: 5px; margin: 5px 0; }}
+                button {{ background-color: #4CAF50; color: white; border: none; cursor: pointer; }}
+                button:hover {{ background-color: #45a049; }}
+                a.button {{ display:inline-block; padding:8px 15px; margin:5px; background:#4CAF50; color:#fff; text-decoration:none; border-radius:5px; }}
+                a.button:hover {{ background:#45a049; }}
             </style>
         </head>
         <body>
             <h1>EcoMarket Central Dashboard</h1>
             
+            <h2>Acciones Rápidas</h2>
+            <a class="button" href="/new-sale">➕ Registrar Nueva Venta</a>
+            <a class="button" href="/add-product-form">📦 Agregar Producto</a>
+            
             <h2>Inventario Central</h2>
             <table>
-                <tr><th>ID</th><th>Producto</th><th>Precio</th><th>Stock</th></tr>
+                <tr><th>ID</th><th>Producto</th><th>Precio</th><th>Stock</th><th>Acciones</th></tr>
                 {inventory_html}
             </table>
             
             <h2>Historial de Ventas</h2>
             <table>
-                <tr><th>Fecha</th><th>Sucursal</th><th>Producto</th><th>Cantidad</th><th>Monto</th><th>Total</th><th>Cambio</th></tr>
+                <tr><th>Fecha</th><th>Sucursal</th><th>Producto</th><th>Cantidad</th><th>Recibido</th><th>Total</th><th>Cambio</th></tr>
                 {notifications_html}
             </table>
-
-            <a href="/new-sale">Registrar Nueva Venta</a>
         </body>
     </html>
     """
 
-# ===== FORMULARIO DE NUEVA VENTA CON AUTOCOMPLETE =====
+# ===== FORMULARIOS CRUD =====
+@app.get("/add-product-form", response_class=HTMLResponse)
+async def add_product_form():
+    return """
+    <h1>Agregar Producto</h1>
+    <form action="/add-product-form" method="post">
+        <label>ID:</label><br><input type="number" name="id" required><br>
+        <label>Nombre:</label><br><input type="text" name="name" required><br>
+        <label>Precio:</label><br><input type="number" step="0.01" name="price" required><br>
+        <label>Stock:</label><br><input type="number" name="stock" required><br>
+        <button type="submit">Agregar</button>
+    </form>
+    <a href="/dashboard">Volver</a>
+    """
+
+@app.post("/add-product-form", response_class=HTMLResponse)
+async def add_product_form_post(id: int = Form(...), name: str = Form(...), price: float = Form(...), stock: int = Form(...)):
+    central_inventory[id] = Product(id=id, name=name, price=price, stock=stock)
+    asyncio.create_task(sync_with_branches("POST", "/inventory", {"id": id, "name": name, "price": price, "stock": stock}))
+    return HTMLResponse("<h3>✅ Producto agregado y sincronizado!</h3><a href='/dashboard'>Volver</a>")
+
+@app.get("/edit-product/{product_id}", response_class=HTMLResponse)
+async def edit_product_form(product_id: int):
+    if product_id not in central_inventory:
+        return HTMLResponse("<h3>❌ Producto no encontrado.</h3><a href='/dashboard'>Volver</a>")
+    p = central_inventory[product_id]
+    return f"""
+    <h1>Editar Producto</h1>
+    <form action="/edit-product/{product_id}" method="post">
+        <label>Nombre:</label><br><input type="text" name="name" value="{p.name}" required><br>
+        <label>Precio:</label><br><input type="number" step="0.01" name="price" value="{p.price}" required><br>
+        <label>Stock:</label><br><input type="number" name="stock" value="{p.stock}" required><br>
+        <button type="submit">Guardar</button>
+    </form>
+    <a href="/dashboard">Volver</a>
+    """
+
+@app.post("/edit-product/{product_id}", response_class=HTMLResponse)
+async def edit_product(product_id: int, name: str = Form(...), price: float = Form(...), stock: int = Form(...)):
+    if product_id not in central_inventory:
+        return HTMLResponse("<h3>❌ Producto no encontrado.</h3><a href='/dashboard'>Volver</a>")
+    central_inventory[product_id] = Product(id=product_id, name=name, price=price, stock=stock)
+    asyncio.create_task(sync_with_branches("PUT", f"/inventory/{product_id}", {"id": product_id, "name": name, "price": price, "stock": stock}))
+    return HTMLResponse("<h3>✅ Producto actualizado y sincronizado!</h3><a href='/dashboard'>Volver</a>")
+
+@app.get("/delete-product/{product_id}", response_class=HTMLResponse)
+async def delete_product_form(product_id: int):
+    if product_id not in central_inventory:
+        return HTMLResponse("<h3>❌ Producto no encontrado.</h3><a href='/dashboard'>Volver</a>")
+    removed = central_inventory.pop(product_id)
+    asyncio.create_task(sync_with_branches("DELETE", f"/inventory/{product_id}"))
+    return HTMLResponse(f"<h3>🗑️ Producto '{removed.name}' eliminado y sincronizado!</h3><a href='/dashboard'>Volver</a>")
+
+# ===== FORMULARIOS DE NUEVA VENTA =====
 @app.get("/new-sale", response_class=HTMLResponse, tags=["Dashboard"])
 async def new_sale_form():
-    options_html = "".join([f"<option value='{p.name}' data-id='{p.id}'>" for p in central_inventory.values()])
+    options_html = "".join([
+        f"<option value='{p.name}' data-id='{p.id}'>" for p in central_inventory.values()
+    ])
     
     return f"""
     <html>
@@ -508,8 +684,8 @@ async def new_sale_form():
                 <label>Cantidad:</label><br>
                 <input type="number" name="quantity_sold" value="1" min="1" required><br>
 
-                <label>Precio Total:</label><br>
-                <input type="number" step="0.01" name="sale_price" value="0.0" required><br><br>
+                <label>Dinero Recibido:</label><br>
+                <input type="number" step="0.01" name="money_received" value="0.0" required><br><br>
 
                 <button type="submit">Enviar Venta</button>
             </form>
@@ -538,26 +714,33 @@ async def submit_sale(
     branch_id: str = Form(...),
     product_id: int = Form(...),
     quantity_sold: int = Form(...),
-    sale_price: float = Form(...)
+    money_received: float = Form(...)
 ):
     if product_id not in central_inventory:
         return HTMLResponse(content="<h3>❌ Producto no encontrado.</h3><a href='/new-sale'>Volver</a>")
     
     product = central_inventory[product_id]
+    total_amount = product.price * quantity_sold
+    change = money_received - total_amount
+
     product.stock = max(0, product.stock - quantity_sold)
 
     notification = SaleNotification(
         branch_id=branch_id,
         product_id=product_id,
         quantity_sold=quantity_sold,
-        sale_price=sale_price,
+        money_received=money_received,
+        total_amount=total_amount,
+        change=change,
         timestamp=datetime.now()
     )
     sales_notifications.append(notification)
 
     return HTMLResponse(content=f"""
         <h3>✅ Venta registrada correctamente!</h3>
-        <p>{branch_id} vendió {quantity_sold}x {product.name} por ${sale_price}</p>
+        <p>{branch_id} vendió {quantity_sold}x {product.name} por ${total_amount}</p>
+        <p><b>Dinero recibido:</b> ${money_received}</p>
+        <p><b>Cambio:</b> ${change}</p>
         <a href="/new-sale">Registrar otra venta</a> | <a href="/dashboard">Ir al Dashboard</a>
     """)
 
