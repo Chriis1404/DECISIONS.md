@@ -797,3 +797,757 @@ if __name__ == "__main__":
 - Posibles discrepancias temporales en inventario.
 - Casos de sobreventa que requieren gestión posterior con el cliente.
 - Complejidad técnica mayor para reconciliación y monitoreo
+
+---
+
+**7.- YML**
+```
+version: "3.9"
+
+services:
+# ========================
+# CENTRAL
+# ========================
+  central:
+    build:
+      context: .
+      # Usar el Dockerfile dentro de la carpeta Central
+      dockerfile: ./Ecomarket/Central/Dockerfile
+    container_name: central-api
+    ports:
+      - "8000:8000"
+    # Montar la carpeta Ecomarket en /app/Ecomarket
+    volumes:
+      - ./Ecomarket:/app/Ecomarket
+    # Directorio de trabajo en el padre, para que Python encuentre 'Ecomarket'
+    working_dir: /app 
+    environment:
+      # Solución final para el error 'ModuleNotFoundError'
+      - PYTHONPATH=/app
+      - BRANCHES=http://sucursal-demo:8002 
+    # Comando con la ruta completa del paquete
+    command: uvicorn Ecomarket.Central.CentralAPI:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      - rabbitmq
+      - redis
+    networks:
+      - ecomarket_net
+
+# ========================
+# SUCURSAL DEMO
+# ========================
+  sucursal-demo:
+    build:
+      context: .
+      # Usar el Dockerfile dentro de la carpeta Sucursal
+      dockerfile: ./Ecomarket/Sucursal/Dockerfile
+    container_name: sucursal-demo
+    ports:
+      - "8002:8002"
+    # Montar la carpeta Ecomarket en /app/Ecomarket
+    volumes:
+      - ./Ecomarket:/app/Ecomarket
+    # Directorio de trabajo en el padre, para que Python encuentre 'Ecomarket'
+    working_dir: /app 
+    environment:
+      # Solución final para el error 'ModuleNotFoundError'
+      - PYTHONPATH=/app
+      - REDIS_HOST=redis
+      - RABBITMQ_HOST=rabbitmq
+      # === CREDENCIALES CORREGIDAS PARA RABBITMQ ===
+      - RABBITMQ_USER=ecomarket_user
+      - RABBITMQ_PASS=ecomarket_password
+      # ============================================
+      - CENTRAL_API_URL=http://central:8000
+    # Comando con la ruta completa del paquete
+    command: uvicorn Ecomarket.Sucursal.SucursalAPIdemo:app --host 0.0.0.0 --port 8002 --reload 
+    depends_on:
+      - central
+      - rabbitmq
+      - redis
+    networks:
+      - ecomarket_net
+
+# ========================
+# REDIS
+# ========================
+  redis:
+    image: redis:6.2-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ecomarket_net
+
+# ========================
+# RABBITMQ
+# ========================
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672" 
+      - "15672:15672" 
+    environment:
+      RABBITMQ_DEFAULT_USER: ecomarket_user
+      RABBITMQ_DEFAULT_PASS: ecomarket_password
+    volumes:
+      - ./rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - ecomarket_net
+
+# ========================
+# RED DE SERVICIOS
+# ========================
+networks:
+  ecomarket_net:
+    driver: bridge
+```
+
+**8.- Dockerfile**
+```
+FROM python:3.10-slim
+
+# 1. ESTABLECER WORKDIR en el directorio padre
+WORKDIR /app
+
+# 2. Copiar los requisitos (el punto es la raíz del contexto de build)
+# Esto garantiza que el archivo se encuentra si está en C:\Users\user\Documents\Eligardo\requirements.txt
+COPY requirements.txt .
+
+# 3. Instalar dependencias
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 4. Copiar la carpeta Ecomarket completa
+COPY Ecomarket /app/Ecomarket
+```
+**9.- API de la Sucursal con los 5 metodos incluidos para prubas**
+```
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Form
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+import os
+import httpx
+import logging
+import redis
+from enum import Enum
+import asyncio
+import uuid
+import pika
+import json
+import time
+import redis # cliente redis bloqueante (usado dentro de to_thread)
+
+# ===== LOGGING =====
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="🌿 EcoMarket Sucursal API",
+    description="Gestión de inventario y ventas con notificación a central",
+    version="5.0.1",
+    docs_url="/docs",
+    redoc_url=None
+)
+
+# ===== CONFIGURACIÓN =====
+BRANCH_ID = "sucursal-demo"
+CENTRAL_API_URL = os.getenv("CENTRAL_API_URL", "http://central:8000")
+
+### Modo de notificación global (1-3: HTTP, 4: Redis, 5: RabbitMQ)
+NOTIF_MODE = 5 # Cambiado a RabbitMQ por defecto
+
+# Configuración Redis
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_QUEUE = os.getenv("REDIS_QUEUE", "sales_queue_redis")
+
+def get_redis_client():
+    return redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+
+# Configuración RabbitMQ
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq") 
+RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
+RABBITMQ_USER = os.getenv("RABBITMQ_USER", "guest")
+RABBITMQ_PASS = os.getenv("RABBITMQ_PASS", "guest")
+RABBITMQ_QUEUE = os.getenv("RABBITMQ_QUEUE", "sale_notifications")
+
+# ===== MODELOS (se mantienen) =====
+class Product(BaseModel):
+    id: int
+    name: str
+    price: float
+    stock: int
+
+class SaleRequest(BaseModel):
+    product_id: int
+    quantity: int
+    money_received: float
+
+class SaleResponse(BaseModel):
+    sale_id: str
+    product_id: int
+    product_name: str
+    quantity_sold: int
+    total_amount: float
+    money_received: float
+    change: float
+    timestamp: datetime
+    status: str
+
+# ===== CIRCUIT BREAKER (se mantiene) =====
+class CircuitState(Enum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+class CircuitBreaker:
+    def __init__(self, failure_threshold=3, recovery_timeout=30):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failure_count = 0
+        self.last_failure_time: Optional[datetime] = None
+        self.state = CircuitState.CLOSED
+    
+    async def call(self, func, *args, **kwargs):
+        if self.state == CircuitState.OPEN:
+            if self._should_attempt_reset():
+                self.state = CircuitState.HALF_OPEN
+                logger.info("🔄 Circuito HALF_OPEN: probando llamada")
+            else:
+                raise Exception("Circuit breaker abierto")
+        try:
+            result = await func(*args, **kwargs)
+            self._on_success()
+            return result
+        except Exception as e:
+            self._on_failure()
+            raise e
+    
+    def _on_success(self):
+        self.failure_count = 0
+        self.state = CircuitState.CLOSED
+    
+    def _on_failure(self):
+        self.failure_count += 1
+        self.last_failure_time = datetime.now()
+        if self.failure_count >= self.failure_threshold:
+            self.state = CircuitState.OPEN
+            logger.error(f"❌ Circuito OPEN: alcanzado límite de fallos ({self.failure_threshold})")
+    
+    def _should_attempt_reset(self):
+        if not self.last_failure_time:
+            return False
+        return datetime.now() >= self.last_failure_time + timedelta(seconds=self.recovery_timeout)
+
+circuit_breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=60)
+
+# ===== INVENTARIO LOCAL Y HISTORIAL DE VENTAS (se mantiene) =====
+local_inventory: Dict[int, Product] = {
+    1: Product(id=1, name="Manzanas Orgánicas", price=2.50, stock=25),
+    2: Product(id=2, name="Pan Integral", price=1.80, stock=15),
+    3: Product(id=3, name="Leche Deslactosada", price=3.20, stock=8)
+}
+sales_history: List[SaleResponse] = []
+
+# =================================================================
+# === FUNCIONES DE NOTIFICACIÓN PARA CADA MODO (Paso 1 al 5) =======
+# =================================================================
+
+# Modo 1: Directo (Asíncrono)
+async def notify_direct(notification: dict):
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        resp = await client.post(f"{CENTRAL_API_URL}/sale-notification", json=notification)
+        resp.raise_for_status()
+        logger.info("✅ Notificación enviada (HTTP 1/5: Directo)")
+
+# Modo 2: Reintentos simples (Asíncrono)
+async def notify_retry_simple(notification: dict, retries: int = 3, delay_s: float = 1.0):
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        last_exc = None
+        for attempt in range(1, retries + 1):
+            try:
+                resp = await client.post(f"{CENTRAL_API_URL}/sale-notification", json=notification)
+                if resp.status_code == 200:
+                    logger.info(f"✅ Notificación enviada (HTTP 2/5) en intento {attempt}")
+                    return
+                else:
+                    last_exc = Exception(f"Central API responded with status {resp.status_code}")
+            except Exception as e:
+                last_exc = e
+                logger.warning(f"Intento {attempt} falló: {e}")
+            await asyncio.sleep(delay_s)
+        raise last_exc or Exception("Fallo con reintentos simples")
+
+# Modo 3: Backoff exponencial (Asíncrono)
+async def notify_backoff(notification: dict, max_retries: int = 5, base_delay: float = 1.0):
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        last_exc = None
+        for attempt in range(max_retries):
+            try:
+                resp = await client.post(f"{CENTRAL_API_URL}/sale-notification", json=notification)
+                if resp.status_code == 200:
+                    logger.info(f"✅ Notificación enviada (HTTP 3/5) en intento {attempt+1}")
+                    return
+                else:
+                    last_exc = Exception(f"Central API responded with status {resp.status_code}")
+            except Exception as e:
+                last_exc = e
+                logger.warning(f"Intento {attempt+1} falló: {e}")
+            sleep_for = base_delay * (2 ** attempt)
+            logger.info(f"⏳ Esperando {sleep_for}s antes del próximo intento")
+            await asyncio.sleep(sleep_for)
+        raise last_exc or Exception("Fallo con backoff exponencial")
+
+
+# -------------------------
+# Modo 4: Redis Queue (Bloqueante ejecutado en hilo)
+# -------------------------
+def send_notification_to_redis(sale: SaleResponse):
+    """Publisher a Redis List. Ejecutado en thread via asyncio.to_thread."""
+    notification = {
+        "sale_id": sale.sale_id,
+        "branch_id": BRANCH_ID,
+        "product_id": sale.product_id,
+        "quantity_sold": sale.quantity_sold,
+        "money_received": sale.money_received,
+        "total_amount": sale.total_amount,
+        "change": sale.change,
+        "timestamp": sale.timestamp.isoformat()
+    }
+    try:
+        r = get_redis_client()
+        r.rpush(REDIS_QUEUE, json.dumps(notification))
+        logger.info(f"✅ Notificación encolada en Redis: {REDIS_QUEUE}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Fallo al enviar a Redis: {e}. Venta {sale.sale_id} NO encolada.")
+        return False
+
+
+# Worker que procesa cola Redis (async, hace lpop usando to_thread)
+async def redis_queue_worker(poll_interval: float = 2.0):
+    logger.info("🔁 Redis worker iniciado")
+    # cliente en hilo cada vez que se necesita
+    while True:
+        try:
+            # lpop en hilo bloqueante
+            raw = await asyncio.to_thread(_redis_lpop_once)
+            if raw:
+                try:
+                    notif = json.loads(raw)
+                except Exception:
+                    logger.error("❌ Mensaje Redis no decodable, saltando")
+                    continue
+
+                logger.info(f"🔄 Reintentando notificación desde Redis: sale_id={notif.get('sale_id')}")
+                # reusar notify_backoff (async) para reenviar
+                try:
+                    await notify_backoff(notif)
+                    logger.info(f"✅ Reenvío exitoso desde Redis: {notif.get('sale_id')}")
+                except Exception as e:
+                    logger.error(f"❌ Falló reenvío desde Redis: {e}. Re-enqueueando")
+                    # volver a encolar (en hilo)
+                    await asyncio.to_thread(_redis_rpush, json.dumps(notif))
+                    # espera un poco para no hacer tight-loop
+                    await asyncio.sleep(5.0)
+            else:
+                await asyncio.sleep(poll_interval)
+        except Exception as e:
+            logger.error(f"Redis worker encontró error: {e}")
+            await asyncio.sleep(5.0)
+
+
+def _redis_lpop_once():
+    """Helper bloqueante: hace LPOP y devuelve el string (o None)."""
+    try:
+        r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+        raw = r.lpop(REDIS_QUEUE)
+        return raw
+    except Exception as e:
+        logger.error(f"Redis LPOP fallo: {e}")
+        return None
+
+def _redis_rpush(value: str):
+    """Helper bloqueante: rpush."""
+    try:
+        r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+        r.rpush(REDIS_QUEUE, value)
+        return True
+    except Exception as e:
+        logger.error(f"Redis RPUSH fallo: {e}")
+        return False
+
+
+# -------------------------
+# Modo 5: RabbitMQ publisher (Bloqueante - ejecutado en hilo)
+# -------------------------
+def publish_sale_with_guarantees(sale_data: dict, max_retries: int = 3):
+    """Publisher con confirmación (usando pika BlockingConnection)."""
+    message = {
+        **sale_data,
+        "message_id": str(uuid.uuid4()),
+        "timestamp": datetime.now().isoformat(),
+        "source": BRANCH_ID,
+        "retry_count": 0
+    }
+    for attempt in range(max_retries):
+        try:
+            params = pika.ConnectionParameters(
+                host=RABBITMQ_HOST,
+                port=RABBITMQ_PORT,
+                credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS),
+                heartbeat=600,
+                blocked_connection_timeout=300,
+            )
+            with pika.BlockingConnection(params) as connection:
+                channel = connection.channel()
+                channel.queue_declare(
+                    queue=RABBITMQ_QUEUE,
+                    durable=True,
+                    arguments={'x-message-ttl': 86400000}
+                )
+
+                # Activa Publisher Confirms
+                channel.confirm_delivery()
+
+                published = channel.basic_publish(
+                    exchange='',
+                    routing_key=RABBITMQ_QUEUE,
+                    body=json.dumps(message, default=str),
+                    properties=pika.BasicProperties(
+                        delivery_mode=2,
+                        message_id=message["message_id"],
+                        correlation_id=sale_data.get("sale_id"),
+                        headers={'source': BRANCH_ID}
+                    ),
+                    mandatory=True
+                )
+
+                if published:
+                    logger.info(f"✅ Mensaje RabbitMQ publicado y confirmado (5/5): {message['message_id']}")
+                    return True
+                else:
+                    logger.warning(f"⚠️ RabbitMQ no confirmó el mensaje")
+                    
+        except Exception as e:
+            logger.error(f"❌ Intento {attempt + 1} falló (RabbitMQ): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+
+    logger.error(f"❌ Falló publicar a RabbitMQ después de {max_retries} intentos. Venta: {sale_data.get('sale_id')}")
+    return False
+
+def send_notification_to_rabbitmq(sale: SaleResponse):
+    notification_data = {
+        "sale_id": sale.sale_id,
+        "branch_id": BRANCH_ID,
+        "product_id": sale.product_id,
+        "quantity_sold": sale.quantity_sold,
+        "money_received": sale.money_received,
+        "total_amount": sale.total_amount,
+        "change": sale.change,
+        "timestamp": sale.timestamp.isoformat()
+    }
+    if not publish_sale_with_guarantees(notification_data):
+        logger.error(f"⚠️ Fallo CRÍTICO al notificar venta {sale.sale_id} a RabbitMQ")
+
+
+# ===========================
+# Función HTTP Dispatcher (1-3)
+# ===========================
+async def dispatch_notify_http(sale_or_notification):
+    # acepta tanto SaleResponse (objeto) como dict (si viene del worker redis)
+    if isinstance(sale_or_notification, dict):
+        notification = sale_or_notification
+    else:
+        sale = sale_or_notification
+        notification = {
+            "branch_id": BRANCH_ID,
+            "product_id": sale.product_id,
+            "quantity_sold": sale.quantity_sold,
+            "money_received": sale.money_received,
+            "total_amount": sale.total_amount,
+            "change": sale.change,
+            "timestamp": sale.timestamp.isoformat()
+        }
+    if NOTIF_MODE == 1:
+        await notify_direct(notification)
+    elif NOTIF_MODE == 2:
+        await notify_retry_simple(notification)
+    elif NOTIF_MODE == 3:
+        await notify_backoff(notification)
+    else:
+        raise Exception("dispatch_notify_http llamado en modo no-HTTP")
+
+
+# === Función principal de envío (convierte a sync/blocking cuando corresponde) ===
+async def send_sale_notification(sale: SaleResponse):
+    """
+    Esta función decide la estrategia según NOTIF_MODE.
+    Es asíncrona y no debe bloquear el event loop.
+    Las operaciones bloqueantes se hacen mediante asyncio.to_thread.
+    """
+    if NOTIF_MODE in [1, 2, 3]:
+        # Modos HTTP: usamos Circuit Breaker
+        try:
+            await circuit_breaker.call(dispatch_notify_http, sale)
+        except Exception as e:
+            logger.error(f"⚠️ Notificación HTTP fallida (CircuitBreaker): {e}")
+    elif NOTIF_MODE == 4:
+        # Redis: encolamos usando thread (no bloqueamos loop)
+        await asyncio.to_thread(send_notification_to_redis, sale)
+    elif NOTIF_MODE == 5:
+        # RabbitMQ: usamos thread para publicar
+        await asyncio.to_thread(send_notification_to_rabbitmq, sale)
+    else:
+        logger.error(f"⚠️ Modo de notificación {NOTIF_MODE} inválido.")
+
+
+# =================================================================
+# === RUTAS API (INTERFAZ MANTENIDA) ==============================
+# =================================================================
+
+# ===== VENTAS API (La interfaz de ruta y su cuerpo se mantiene) =====
+@app.post("/sales", response_model=SaleResponse, tags=["Ventas"])
+async def process_sale(sale_request: SaleRequest):
+    if sale_request.product_id not in local_inventory:
+        raise HTTPException(status_code=404, detail="Producto no disponible")
+    product = local_inventory[sale_request.product_id]
+    if product.stock < sale_request.quantity:
+        raise HTTPException(status_code=400, detail=f"Stock insuficiente. Disponible: {product.stock}")
+    
+    product.stock -= sale_request.quantity
+    sale_timestamp = datetime.now()
+    total_amount = product.price * sale_request.quantity
+    change = sale_request.money_received - total_amount
+
+    sale_response = SaleResponse(
+        sale_id=f"{BRANCH_ID}_{sale_timestamp.isoformat()}",
+        product_id=product.id,
+        product_name=product.name,
+        quantity_sold=sale_request.quantity,
+        total_amount=total_amount,
+        money_received=sale_request.money_received,
+        change=change,
+        timestamp=sale_timestamp,
+        status="completed"
+    )
+    sales_history.append(sale_response)
+
+    # Ejecutar envío como tarea asíncrona (no blocking)
+    asyncio.create_task(send_sale_notification(sale_response))
+
+    return sale_response
+
+
+# ===== DASHBOARD (La interfaz HTML se adapta con la nueva opción) =====
+@app.get("/dashboard", response_class=HTMLResponse, tags=["Dashboard"])
+async def dashboard():
+    inventory_html = "".join([
+        f"<tr><td>{p.id}</td><td>{p.name}</td><td>${p.price}</td><td>{p.stock}</td></tr>"
+        for p in local_inventory.values()
+    ])
+
+    sales_html = "".join([
+        f"<tr><td>{s.timestamp.strftime('%Y-%m-%d %H:%M:%S')}</td>"
+        f"<td>{BRANCH_ID}</td>"
+        f"<td>{s.product_name}</td>"
+        f"<td>{s.quantity_sold}</td>"
+        f"<td>${s.money_received}</td>"
+        f"<td>${s.total_amount}</td>"
+        f"<td>${s.change}</td></tr>"
+        for s in sales_history
+    ])
+
+    mode_description = {
+        1: "HTTP Directo",
+        2: "Reintentos Simples",
+        3: "Backoff Exponencial (Circuit Breaker)",
+        4: "Redis Queue (Cola en Redis)",
+        5: "RabbitMQ (Garantías de Entrega)"
+    }.get(NOTIF_MODE, "Desconocido")
+
+    cb_state = f"{circuit_breaker.state.value.upper()} (Fallos: {circuit_breaker.failure_count})" \
+               if NOTIF_MODE in [1,2,3] else 'N/A'
+
+    return f"""
+    <html>
+        <head>
+            <title>🌿 EcoMarket Sucursal Dashboard</title>
+            <style>
+                body {{ font-family: Arial; }}
+                table {{ border-collapse: collapse; width: 80%; margin-bottom: 30px; }}
+                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                th {{ background-color: #4CAF50; color: white; }}
+                input, button, select {{ padding: 5px; margin: 5px 0; }}
+                button {{ background-color: #4CAF50; color: white; border: none; cursor: pointer; }}
+                button:hover {{ background-color: #45a049; }}
+                a.button {{ display:inline-block; padding:8px 15px; margin:5px; background:#4CAF50; color:#fff; text-decoration:none; border-radius:5px; }}
+                a.button:hover {{ background:#45a049; }}
+            </style>
+        </head>
+        <body>
+            <h1>EcoMarket Sucursal Dashboard</h1>
+            <p><b>Branch:</b> {BRANCH_ID}</p>
+            <p><b>Status:</b> Operational</p>
+            <p><b>Circuit Breaker (HTTP):</b> {cb_state}</p>
+            <p><b>Modo actual de notificación:</b> {NOTIF_MODE} - {mode_description}</p>
+
+            <form action="/set-mode" method="post">
+                <label>Seleccionar modo:</label>
+                <select name="mode">
+                    <option value="1" {"selected" if NOTIF_MODE==1 else ""}>1 - HTTP Directo</option>
+                    <option value="2" {"selected" if NOTIF_MODE==2 else ""}>2 - Reintentos Simples</option>
+                    <option value="3" {"selected" if NOTIF_MODE==3 else ""}>3 - Backoff Exponencial</option>
+                    <option value="4" {"selected" if NOTIF_MODE==4 else ""}>4 - Redis Queue (En Redis)</option>
+                    <option value="5" {"selected" if NOTIF_MODE==5 else ""}>5 - RabbitMQ (Garantías)</option>
+                </select>
+                <button type="submit">Cambiar</button>
+            </form>
+
+            <h2>Acciones</h2>
+            <a class="button" href="/submit-sale-form">➕ Registrar Nueva Venta</a>
+
+            <h2>Inventario Local (solo lectura)</h2>
+            <table>
+                <tr><th>ID</th><th>Producto</th><th>Precio</th><th>Stock</th></tr>
+                {inventory_html}
+            </table>
+
+            <h2>Ventas Realizadas</h2>
+            <table>
+                <tr><th>Fecha</th><th>Sucursal</th><th>Producto</th><th>Cantidad</th><th>Recibido</th><th>Total</th><th>Cambio</th></tr>
+                {sales_html}
+            </table>
+        </body>
+    </html>
+    """
+
+# ===== CAMBIO DE MODO (Se mantiene la interfaz) =====
+@app.post("/set-mode", response_class=HTMLResponse, tags=["Dashboard"])
+async def set_mode(mode: int = Form(...)):
+    global NOTIF_MODE
+    if mode not in [1, 2, 3, 4, 5]:
+        return HTMLResponse(f"<p>Modo {mode} no válido.</p><a href='/dashboard'>Volver</a>")
+    NOTIF_MODE = mode
+    logger.info(f"🔧 Modo cambiado a {NOTIF_MODE}")
+    return HTMLResponse(f"<p>Modo cambiado a {NOTIF_MODE}</p><a href='/dashboard'>Volver</a>")
+
+
+# ===== FORMULARIO DE VENTAS (Se mantiene la interfaz y se corrige el manejo de tareas) =====
+@app.post("/submit-sale", response_class=HTMLResponse, tags=["Dashboard"])
+async def submit_sale_form(
+    product_id: int = Form(...),
+    quantity: int = Form(...),
+    money_received: float = Form(...)
+):
+    if product_id not in local_inventory:
+        return HTMLResponse(content="<h3>❌ Producto no encontrado.</h3><a href='/dashboard'>Volver</a>")
+
+    product = local_inventory[product_id]
+    if product.stock < quantity:
+        return HTMLResponse(content=f"<h3>❌ Stock insuficiente. Disponible: {product.stock}</h3><a href='/dashboard'>Volver</a>")
+
+    product.stock -= quantity
+    sale_timestamp = datetime.now()
+    total_amount = product.price * quantity
+    change = money_received - total_amount
+
+    sale = SaleResponse(
+        sale_id=f"{BRANCH_ID}_{sale_timestamp.isoformat()}",
+        product_id=product.id,
+        product_name=product.name,
+        quantity_sold=quantity,
+        total_amount=total_amount,
+        money_received=money_received,
+        change=change,
+        timestamp=sale_timestamp,
+        status="completed"
+    )
+    sales_history.append(sale)
+
+    # Ejecutar la notificación en background (usamos create_task + to_thread internamente)
+    asyncio.create_task(send_sale_notification(sale))
+
+    return HTMLResponse(content=f"""
+        <h3>✅ Venta registrada correctamente!</h3>
+        <p>{quantity}x {product.name} vendidos por ${total_amount}</p>
+        <p><b>Dinero recibido:</b> ${money_received}</p>
+        <p><b>Cambio:</b> ${change}</p>
+        <p><b>Modo de Notificación:</b> {NOTIF_MODE}</p>
+        <a href="/dashboard">Volver al Dashboard</a>
+    """)
+
+
+# ===== RUTAS RESTANTES (se mantienen) =====
+@app.get("/inventory", response_model=List[Product], tags=["Inventario"])
+async def get_local_inventory():
+    return list(local_inventory.values())
+
+@app.get("/inventory/{product_id}", response_model=Product, tags=["Inventario"])
+async def get_product(product_id: int):
+    if product_id not in local_inventory:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    return local_inventory[product_id]
+
+@app.get("/sales/stats", tags=["Ventas"])
+async def sales_stats():
+    if not sales_history:
+        return {"total_sales": 0, "total_revenue": 0}
+    total_revenue = sum(s.total_amount for s in sales_history)
+    return {
+        "total_sales": len(sales_history),
+        "total_revenue": round(total_revenue, 2),
+        "average_sale": round(total_revenue / len(sales_history), 2)
+    }
+
+@app.get("/submit-sale-form", response_class=HTMLResponse)
+async def submit_sale_page():
+    options_html = "".join([f"<option value='{p.id}'>{p.name}</option>" for p in local_inventory.values()])
+    return f"""
+    <h1>Registrar Nueva Venta</h1>
+    <form action="/submit-sale" method="post">
+        <label>Producto:</label><br>
+        <select name="product_id">{options_html}</select><br>
+        <label>Cantidad:</label><br><input type="number" name="quantity" value="1" min="1" required><br>
+        <label>Dinero Recibido:</label><br><input type="number" step="0.01" name="money_received" value="0.0" required><br><br>
+        <button type="submit">Enviar Venta</button>
+    </form>
+    <a href="/dashboard">Volver</a>
+    """
+
+@app.get("/", tags=["General"])
+async def root():
+    return {
+        "service": "🌿 EcoMarket Sucursal API",
+        "branch_id": BRANCH_ID,
+        "status": "operational",
+        "total_products": len(local_inventory),
+        "total_sales": len(sales_history),
+        "current_notification_mode": NOTIF_MODE,
+        "circuit_breaker_state": circuit_breaker.state.value if NOTIF_MODE in [1,2,3] else 'N/A',
+        "circuit_failures": circuit_breaker.failure_count if NOTIF_MODE in [1,2,3] else 'N/A'
+    }
+
+# ===== STARTUP: lanzar worker de Redis para procesar cola (si Redis disponible) =====
+@app.on_event("startup")
+async def startup_event():
+    # lanzar worker Redis (si usas Redis, éste revisará la cola y reintentará)
+    # ejecuta el worker siempre (hará reintentos en caso de que Redis no esté disponible)
+    asyncio.create_task(redis_queue_worker())
+    logger.info("Startup completo - Redis worker lanzado (si Redis está accesible).")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8002)
+```
