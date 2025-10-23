@@ -3357,7 +3357,7 @@ body {{
     </div>
 </div>
 
-    <div class="footer">© 2025 EcoMarket Sucursal — {BRANCH_ID}</div>
+    <div class="footer"></div>
 </div>
 
 <div class="modal fade" id="saleModal" tabindex="-1" aria-hidden="true">
@@ -3585,4 +3585,4 @@ if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8002)
 ```
 
-VIDEO DE UN MINUTO DE EXPLICACIÓN SOBRE PUB/SUB: https://drive.google.com/file/d/12OLajGMGWTuj1jZLAJqkLWHtUcA8lLIi/view?usp=sharing
+VIDEO DE UN MINUTO DE EXPLICACIÓN SOBRE PUB/SUB: https://drive.google.com/file/d/1RGvXK39IKS6eGHSssG9YYNzUEwWLT2yl/view?usp=sharing
