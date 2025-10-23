@@ -1566,10 +1566,8 @@ import httpx
 import asyncio
 import json
 import uuid
-import time # Importar time para el reintento
-import sys # Importar sys para el control de errores
-
-### NUEVO: Importaciones para RabbitMQ Worker
+import time
+import sys
 import pika
 from threading import Thread
 
@@ -1579,7 +1577,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="🌿 EcoMarket Central API",
     description="Servidor central que gestiona inventario maestro y recibe notificaciones de sucursales.",
-    version="4.0.0 (Soporte Modos 5 y 6)", # Versión actualizada
+    version="4.0.0 (Soporte Modos 5 y 6)",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -1602,8 +1600,8 @@ EXCHANGE_FANOUT = os.getenv("RABBITMQ_EXCHANGE_FANOUT", "ventas_global_fanout")
 
 # --- NUEVOS MODOS: FANOUT (Pub/Sub - Usuarios) ---
 EXCHANGE_USER_EVENTS = os.getenv("RABBITMQ_EXCHANGE_USERS", "user_events_fanout")
-QUEUE_USER_NOTIFS = "user_notifs_central" # Cola para NotificacionesService (Email)
-QUEUE_USER_STATS = "user_stats_central" # Cola para EstadísticasService (Conteo)
+QUEUE_USER_NOTIFS = "user_notifs_central"
+QUEUE_USER_STATS = "user_stats_central"
 # ====================================================================
 
 
@@ -1620,7 +1618,7 @@ class SaleNotification(BaseModel):
     product_id: int
     quantity_sold: int
     timestamp: Union[datetime, str]
-    money_received: Optional[float] = None # Hacemos opcional para manejar notificaciones sin detalles de pago
+    money_received: Optional[float] = None
     total_amount: float
     change: Optional[float] = None
 
@@ -1645,14 +1643,16 @@ central_inventory: Dict[int, Product] = {
 # ===== HISTORIAL DE VENTAS (Se mantiene) =====
 sales_notifications: List[SaleNotification] = []
 
+# Contador global para el EstadísticasService (Inicialización)
+TOTAL_USERS_CREATED = 0 
+
 # ====================================================================
-# === LÓGICA UNIFICADA DE PROCESAMIENTO DE VENTAS (Se mantiene) ===
+# === LÓGICA DE NEGOCIO (Se mantiene) ===
 # ====================================================================
 
 def process_sale_notification(notification_data: dict):
     """Lógica de negocio para registrar una venta y actualizar el stock (usada por HTTP y AMQP)."""
     try:
-        # Crea el objeto Pydantic a partir del diccionario
         notification = SaleNotification(**notification_data)
 
         if notification.product_id not in central_inventory:
@@ -1661,7 +1661,6 @@ def process_sale_notification(notification_data: dict):
 
         product = central_inventory[notification.product_id]
         
-        # Actualizar stock (nunca negativo)
         product.stock = max(0, product.stock - notification.quantity_sold)
         
         sales_notifications.append(notification)
@@ -1671,30 +1670,20 @@ def process_sale_notification(notification_data: dict):
 
     except Exception as e:
         logger.error(f"❌ Error al procesar la venta: {e}. Datos: {notification_data}")
-###################
-
-# Insertar después de la definición de process_sale_notification (Lógica de Usuarios)
-
-# Contador global para el EstadísticasService (Inicialización)
-TOTAL_USERS_CREATED = 0 
-
-
+        
 def process_user_created_event(message_data: dict, worker_name: str):
     """Procesa el evento USUARIOCREADO (Envía email o actualiza estadísticas)."""
     global TOTAL_USERS_CREATED
     
-    # Simple validación de contrato
     if message_data.get('event_type') != 'UsuarioCreado':
         return 
 
     if worker_name == "Notificaciones":
-        # Lógica de NotificacionesService (Email simulado)
         logger.info(f"📧 [NOTIFICACIONES] Enviando email simulado a {message_data.get('email')}")
-        time.sleep(0.5) # Simular latencia de envío de email
+        time.sleep(0.5)
         logger.info(f"✅ Email simulado completado.")
     
     elif worker_name == "Estadisticas":
-        # Lógica de EstadísticasService (Conteo)
         TOTAL_USERS_CREATED += 1
         logger.info(f"🎁 [ESTADÍSTICAS] Nuevo usuario ({message_data.get('nombre')}). Total: {TOTAL_USERS_CREATED}")
         time.sleep(0.1)
@@ -1704,10 +1693,8 @@ def process_user_created_event(message_data: dict, worker_name: str):
 
 
 # ====================================================================
-# === WORKERS/CONSUMIDORES DE RABBITMQ (Nueva Estructura) ===
+# === WORKERS/CONSUMIDORES DE RABBITMQ (Se mantiene) ===
 # ====================================================================
-
-# Reemplazar las funciones callback y start_rabbitmq_worker completas
 
 def callback(ch, method, properties, body):
     """Callback común para todos los mensajes (Ventas y Usuarios)."""
@@ -1715,25 +1702,19 @@ def callback(ch, method, properties, body):
         notification_data = json.loads(body.decode())
         exchange = method.exchange
         
-        # 1. Identificar si es un evento de VENTA
         if exchange in [EXCHANGE_DIRECT, EXCHANGE_FANOUT]:
-            # El worker de Ventas (Direct o Fanout) siempre actualiza el inventario
             process_sale_notification(notification_data)
         
-        # 2. Identificar si es un evento de USUARIO
         elif exchange == EXCHANGE_USER_EVENTS:
-            # Determinar qué worker está consumiendo por el nombre de su cola (consumer_tag)
             queue = method.consumer_tag 
             worker_name = "Notificaciones" if queue == QUEUE_USER_NOTIFS else "Estadisticas"
             logger.info(f"📥 [USUARIOS - {worker_name}] Evento recibido. Procesando acción...")
             process_user_created_event(notification_data, worker_name)
 
-        # Confirma el mensaje a RabbitMQ (ACK)
         ch.basic_ack(delivery_tag=method.delivery_tag)
         
     except Exception as e:
         logger.error(f"❌ Error al procesar mensaje de RabbitMQ: {e}")
-        # Rechazar el mensaje (vuelve a la cola, para reintento)
         ch.basic_reject(delivery_tag=method.delivery_tag, requeue=True)
 
 
@@ -1756,7 +1737,7 @@ def start_rabbitmq_worker(queue_name: str, exchange_name: str, exchange_type: st
             channel.exchange_declare(exchange=exchange_name, exchange_type=exchange_type, durable=True)
             channel.queue_declare(queue=queue_name, durable=True)
             
-            consumer_tag = queue_name # Usado en el callback para identificar el worker
+            consumer_tag = queue_name
 
             channel.queue_bind(
                 exchange=exchange_name, queue=queue_name, routing_key=routing_key
@@ -1766,7 +1747,7 @@ def start_rabbitmq_worker(queue_name: str, exchange_name: str, exchange_type: st
                 queue=queue_name, 
                 on_message_callback=callback,
                 auto_ack=False,
-                consumer_tag=consumer_tag # CRÍTICO: Pasa el nombre de la cola como tag
+                consumer_tag=consumer_tag
             )
 
             logger.info(f'✅ Worker {queue_name} listo. Consumiendo...')
@@ -1783,8 +1764,6 @@ def start_rabbitmq_worker(queue_name: str, exchange_name: str, exchange_type: st
             break
 
 # ===== HOOK DE INICIO DE FASTAPI (INICIA AMBOS WORKERS) =====
-# Reemplazar la función startup_event completa
-
 @app.on_event("startup")
 async def startup_event():
     logger.info("🚀 Iniciando Central API con 4 Workers (Ventas y Usuarios)...")
@@ -1846,7 +1825,6 @@ async def add_product(product: Product):
         raise HTTPException(status_code=400, detail="El producto ya existe")
     central_inventory[product.id] = product
 
-    # 🔄 Sincronizar a sucursales
     asyncio.create_task(sync_with_branches("POST", "/inventory", product.model_dump())) 
     return product
 
@@ -1856,7 +1834,6 @@ async def update_product(product_id: int, product: Product):
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     central_inventory[product_id] = product
 
-    # 🔄 Sincronizar a sucursales
     asyncio.create_task(sync_with_branches("PUT", f"/inventory/{product_id}", product.model_dump()))
     return product
 
@@ -1866,7 +1843,6 @@ async def delete_product(product_id: int):
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     removed = central_inventory.pop(product_id)
 
-    # 🔄 Sincronizar a sucursales
     asyncio.create_task(sync_with_branches("DELETE", f"/inventory/{product_id}"))
     return {"removed": removed.name, "id": removed.id}
 
@@ -1879,26 +1855,34 @@ async def sale_notification(notification: SaleNotification):
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     return {"message": "Venta registrada correctamente", "updated_stock": updated_stock}
 #
+
+# =================================================================
+# === DASHBOARD (APLICACIÓN DE ESTILO SUCURSAL) ===================
+# =================================================================
+# Reemplazar la función dashboard completa con esta versión
 @app.get("/dashboard", response_class=HTMLResponse, tags=["Dashboard"])
 async def dashboard():
-    # Cálculo de métricas
+    global TOTAL_USERS_CREATED
+    
     total_sales_count = len(sales_notifications)
     total_products_count = len(central_inventory)
-    # Aseguramos que la suma ignore None en total_amount si la notificación vino incompleta
     total_revenue = sum(n.total_amount for n in sales_notifications if n.total_amount is not None) 
 
-    # Construcción dinámica del inventario
+    # --- MODIFICACIÓN CLAVE AQUÍ: AÑADIR COLUMNA DE ACCIONES ---
     inventory_html = "".join([
         f"<tr class='{'table-danger' if p.stock < 10 else ''}'>"
         f"<td>{p.id}</td>"
         f"<td>{p.name}</td>"
         f"<td>${p.price:.2f}</td>"
         f"<td>{p.stock}</td>"
+        f"<td>"
+        f"  <a href='/edit-product/{p.id}' class='btn btn-sm btn-outline-warning me-1'>✏️</a>"
+        f"  <a href='/delete-product/{p.id}' class='btn btn-sm btn-outline-danger'>🗑️</a>"
+        f"</td>"
         f"</tr>"
         for p in central_inventory.values()
     ])
 
-    # Historial de ventas
     notifications_html = "".join([
         f"<tr><td>{n.timestamp.strftime('%Y-%m-%d %H:%M:%S')}</td>"
         f"<td>{n.branch_id}</td>"
@@ -1920,10 +1904,13 @@ async def dashboard():
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 
 <style>
+/* Estilos basados en la sucursal, usando la paleta roja */
 body {{ background-color: #FAFAFA; font-family: 'Segoe UI', sans-serif; color: #333; }}
-.navbar {{ background-color: #ED4040; color: white; padding: 0.8rem 1.5rem; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); }}
+.navbar {{ 
+    background-color: #ED4040; /* Rojo Intenso (Ventas Central) */
+    color: white; padding: 0.8rem 1.5rem; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); 
+}}
 .navbar-brand {{ font-weight: 600; font-size: 1.3rem; color: white !important; }}
-.metrics {{ display: flex; gap: 1rem; align-items: center; margin-right: 1.5rem; }}
 .metric-item {{ 
     text-align: center; background: rgba(255, 255, 255, 0.15); border-radius: 8px; 
     padding: 0.4rem 0.8rem; font-size: 0.85rem; color: #fff; min-width: 90px; 
@@ -1932,26 +1919,52 @@ body {{ background-color: #FAFAFA; font-family: 'Segoe UI', sans-serif; color: #
 .metric-item h6 {{ margin: 0; font-size: 0.75rem; font-weight: 500; opacity: 0.9; }}
 .metric-item p {{ margin: 0; font-size: 1rem; font-weight: 600; color: rgba(255,255,255,0.9); }}
 
+.btn-main, .btn-sale {{
+    border: 1px solid rgba(255,255,255,0.35);
+    border-radius: 8px;
+    font-weight: 600;
+    padding: 6px 14px;
+    color: #fff;
+    transition: all 0.25s ease;
+    font-size: 0.9rem;
+}}
+.btn-main {{ background-color: #F06060; }} /* Coral (Inventario) */
+.btn-sale {{ background-color: #ED4040; }} /* Rojo Intenso (Ventas) */
+.btn-main:hover, .btn-sale:hover {{
+    box-shadow: 0 0 14px rgba(255,255,255,0.6);
+    transform: scale(1.03);
+}}
+
 .card {{ border: none; border-radius: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.06); background-color: #fff; }}
 .card-header.bg-coral {{ background-color: #F06060; color: #fff; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }}
 .card-header.bg-intense {{ background-color: #ED4040; color: #fff; font-weight: 600; }}
 .table thead th {{ background-color: #ED4040; color: white; border: none; font-weight: 500; }}
-.bg-stats {{ background-color: #007bff; }} /* Estilo para el nuevo contador de usuarios */
+.table tbody tr:hover {{ background-color: #FFF0F0; }}
+.bg-stats {{ background-color: #007bff; }} /* Azul para Usuarios Creados */
+#toast {{
+    position: fixed; top: 20px; right: 20px; min-width: 250px; padding: 10px 20px; border-radius: 8px; 
+    color: white; font-weight: 600; z-index: 1050; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    display: none; 
+}}
+#toast.success {{ background-color: #4CAF50; }}
+#toast.error {{ background-color: #ED4040; }}
+#toast.warning {{ background-color: #FFC107; color: #333; }}
 </style>
 </head>
 
 <body>
 <nav class="navbar navbar-expand-lg navbar-dark">
-    <a class="navbar-brand" href="#">EcoMarket Central</a>
-    <div class="ms-auto d-flex align-items-center metrics">
-        <div class="metric-item"><h6>Productos</h6><p>{total_products_count}</p></div>
-        <div class="metric-item"><h6>Ventas</h6><p>{total_sales_count}</p></div>
-        <div class="metric-item"><h6>Recaudación</h6><p>${total_revenue:.2f}</p></div>
-        <div class="metric-item bg-stats"><h6>Usuarios Creados</h6><p>{TOTAL_USERS_CREATED}</p></div>
-        <div class="metric-item"><h6>Servidor🟢</h6></div>
+    <a class="navbar-brand" href="#">EcoMarket Central API</a>
+    <div class="ms-auto d-flex align-items-center">
+        <div class="metrics-expanded d-flex me-4"> 
+            <div class="metric-item me-3"><h6>Productos</h6><p>{total_products_count}</p></div>
+            <div class="metric-item me-3"><h6>Ventas</h6><p>{total_sales_count}</p></div>
+            <div class="metric-item me-3"><h6>Recaudación</h6><p>${total_revenue:.2f}</p></div>
+            <div class="metric-item bg-stats me-3"><h6>Usuarios Creados</h6><p>{TOTAL_USERS_CREATED}</p></div>
+        </div>
         <div class="nav-separator"></div>
-        <button class="btn btn-main ms-2" data-bs-toggle="modal" data-bs-target="#addProductModal">Producto</button>
-        <button class="btn btn-main ms-2" data-bs-toggle="modal" data-bs-target="#addSaleModal">Venta</button>
+        <button class="btn btn-main ms-3" data-bs-toggle="modal" data-bs-target="#addProductModal">➕ Producto</button>
+        <button class="btn btn-sale ms-2" data-bs-toggle="modal" data-bs-target="#addSaleModal">💸 Venta</button>
     </div>
 </nav>
 
@@ -1961,12 +1974,18 @@ body {{ background-color: #FAFAFA; font-family: 'Segoe UI', sans-serif; color: #
             <div class="card">
                 <div class="card-header bg-coral">
                     <span>Inventario Central (Afectado por Ventas)</span>
-                    <button class="edit-btn" onclick="openEditModal()">Editar</button>
                 </div>
                 <div class="card-body p-0">
                     <div class="table-responsive" style="max-height:400px;">
                         <table class="table table-hover table-sm mb-0 align-middle">
-                            <thead><tr><th>ID</th><th>Producto</th><th>Precio</th><th>Stock</th></tr></thead>
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Producto</th>
+                                    <th>Precio</th>
+                                    <th>Stock</th>
+                                    <th>Acciones</th> </tr>
+                            </thead>
                             <tbody>{inventory_html}</tbody>
                         </table>
                     </div>
@@ -1990,7 +2009,7 @@ body {{ background-color: #FAFAFA; font-family: 'Segoe UI', sans-serif; color: #
     </div>
 </div>
 
-<div class="footer container">© 2025 EcoMarket Central — Workers: (Direct/Fanout Ventas) + (Notifs/Stats Usuarios)</div>
+<div class="footer container"></div>
 
 <div class="modal fade" id="addProductModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
@@ -2004,7 +2023,7 @@ body {{ background-color: #FAFAFA; font-family: 'Segoe UI', sans-serif; color: #
           <input class="form-control mb-2" name="stock" type="number" placeholder="Stock inicial" required>
         </div>
         <div class="modal-footer">
-          <button type="submit" class="btn btn-main w-100">Guardar</button>
+          <button type="submit" class="btn btn-danger w-100">Guardar</button>
         </div>
       </form>
     </div>
@@ -2028,7 +2047,7 @@ body {{ background-color: #FAFAFA; font-family: 'Segoe UI', sans-serif; color: #
           <div id="saleSummary" class="text-muted small mt-2"></div>
         </div>
         <div class="modal-footer">
-          <button type="submit" class="btn btn-main w-100">Registrar</button>
+          <button type="submit" class="btn btn-danger w-100">Registrar</button>
         </div>
       </form>
     </div>
@@ -2039,18 +2058,67 @@ body {{ background-color: #FAFAFA; font-family: 'Segoe UI', sans-serif; color: #
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-// ===== FUNCIONES JS =====
-function openEditModal() {{
-  new bootstrap.Modal(document.getElementById('editInventoryModal')).show();
+// ===== FUNCIONES JS (Mantenidas) =====
+
+// === Función para mostrar notificaciones (Toast) ===
+function showToast(message, type='success') {{
+  const toast = document.createElement('div');
+  const existingToast = document.getElementById('toast');
+  if (existingToast) existingToast.remove();
+  
+  toast.id = 'toast';
+  toast.className = type;
+  toast.innerHTML = message;
+  document.body.appendChild(toast);
+  toast.style.display = 'block';
+  setTimeout(() => toast.remove(), 3500);
 }}
+
+
+// === 1. Lógica para Agregar Producto ===
+document.getElementById('addProductForm').addEventListener('submit', async (e) => {{
+    e.preventDefault();
+    const formData = new FormData(e.target);
+
+    const payload = {{
+        id: parseInt(formData.get("id")),
+        name: formData.get("name"),
+        price: parseFloat(formData.get("price")),
+        stock: parseInt(formData.get("stock"))
+    }};
+
+    try {{
+        const res = await fetch("/inventory", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify(payload)
+        }});
+
+        if (res.ok) {{
+            showToast("✅ Producto agregado y sincronizado correctamente.");
+            const modal = bootstrap.Modal.getInstance(document.getElementById('addProductModal'));
+            modal.hide();
+            setTimeout(() => location.reload(), 1500);
+        }} else {{
+            const error = await res.json();
+            console.error("Error al agregar producto:", error);
+            showToast("❌ Error: " + (error.detail || "Hubo un problema."), "error");
+        }}
+    }} catch (err) {{
+        console.error(err);
+        showToast("❌ Error de conexión al agregar producto.", "error");
+    }}
+}});
+
+
+// === 2. Lógica para Registrar Venta ===
 
 // Generar nuevo UUID cada vez que se abre el modal para ventas manuales
 document.getElementById("addSaleModal").addEventListener("show.bs.modal", () => {{
-    const saleIdInput = document.getElementById("saleIdManual");
-    if (saleIdInput) {{
-        // Usar crypto.randomUUID() o una simulación simple si no está disponible
-        saleIdInput.value = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : 'MANUAL-' + Date.now();
-    }}
+    const saleIdInput = document.getElementById("saleIdManual");
+    if (saleIdInput) {{
+        saleIdInput.value = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : 'MANUAL-' + Date.now();
+    }}
 }});
 
 // === Cargar productos con badge de stock bajo ===
@@ -2062,9 +2130,9 @@ document.getElementById("addSaleModal").addEventListener("show.bs.modal", async 
     const products = await res.json();
     select.innerHTML = "<option value=''>-- Selecciona un producto --</option>" +
       products.map(p => {{
-        const badge = p.stock < 10 ? "<span class='badge-low'>Stock Bajo</span>" : "";
+        const badge = p.stock < 10 ? "<span class='badge bg-warning text-dark ms-2'>Stock Bajo</span>" : "";
         return `<option value="${{p.id}}" data-price="${{p.price}}" data-stock="${{p.stock}}">
-                ${{p.name}} — $${{p.price.toFixed(2)}} (Stock: ${{p.stock}}) ${{badge}}
+                ${{p.name}} — $${{p.price.toFixed(2)}} (Stock: ${{p.stock}})
                 </option>`;
       }}).join("");
   }} catch (err) {{
@@ -2105,20 +2173,24 @@ document.getElementById('addSaleForm').addEventListener('submit', async (e) => {
   const product_id = parseInt(formData.get("product_id"));
   const quantity_sold = parseInt(formData.get("quantity_sold"));
   const money_received = parseFloat(formData.get("money_received"));
-  const sale_id = formData.get("sale_id"); // Obtener el ID de venta
+  const sale_id = formData.get("sale_id");
 
   const selected = document.getElementById("productSelect").options[
     document.getElementById("productSelect").selectedIndex
   ];
+
+    if (!selected || !selected.dataset.price) {{
+        return showToast("Selecciona un producto válido.", "error");
+    }}
+
   const price = parseFloat(selected.dataset.price);
   const total_amount = price * quantity_sold;
   const change = money_received - total_amount;
 
-  if (!product_id) return showToast("Selecciona un producto válido.", "error");
-  if (money_received < total_amount) return showToast("Dinero insuficiente.", "warning");
+  if (money_received < total_amount) return showToast("Dinero insuficiente. Faltan $"+Math.abs(change).toFixed(2), "warning");
 
   const payload = {{
-    sale_id, // Incluir el ID de venta en el payload
+    sale_id,
     branch_id,
     product_id,
     quantity_sold,
@@ -2136,6 +2208,8 @@ document.getElementById('addSaleForm').addEventListener('submit', async (e) => {
     }});
     if (res.ok) {{
       showToast("✅ Venta registrada correctamente.");
+      const modal = bootstrap.Modal.getInstance(document.getElementById('addSaleModal'));
+      modal.hide();
       setTimeout(() => location.reload(), 1500);
     }} else {{
       const error = await res.text();
@@ -2147,137 +2221,312 @@ document.getElementById('addSaleForm').addEventListener('submit', async (e) => {
     showToast("❌ Error de conexión.", "error");
   }}
 }});
-
-function showToast(message, type='success') {{
-  const toast = document.createElement('div');
-  toast.id = 'toast';
-  toast.className = type;
-  toast.innerHTML = message;
-  document.body.appendChild(toast);
-  toast.style.display = 'block';
-  setTimeout(() => toast.remove(), 3500);
-}}
 </script>
 </body>
 </html>
 """
 
+# Resto de funciones (add-product-form, edit-product, delete-product, etc.) se mantienen igual.
+# No es necesario incluirlas de nuevo ya que solo se modificó el dashboard.
 
 
-
-# ===== FORMULARIOS CRUD (se mantienen) =====
+# ===== FORMULARIOS CRUD (Ajustados al estilo) =====
 @app.get("/add-product-form", response_class=HTMLResponse)
 async def add_product_form():
     return """
-    <h1>Agregar Producto</h1>
-    <form action="/add-product-form" method="post">
-        <label>ID:</label><br><input type="number" name="id" required><br>
-        <label>Nombre:</label><br><input type="text" name="name" required><br>
-        <label>Precio:</label><br><input type="number" step="0.01" name="price" required><br>
-        <label>Stock:</label><br><input type="number" name="stock" required><br>
-        <button type="submit">Agregar</button>
-    </form>
-    <a href="/dashboard">Volver</a>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>EcoMarket Central - Agregar Producto</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #FAFAFA; font-family: 'Segoe UI', sans-serif; color: #333; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); background-color: #fff; max-width: 400px; margin: 50px auto; }
+        .card-header.bg-coral { background-color: #F06060; color: #fff; font-weight: 600; }
+        .btn-danger { background-color: #ED4040; border-color: #ED4040; }
+        .btn-danger:hover { background-color: #D33030; border-color: #D33030; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="card-header bg-coral">
+            <h5>Agregar Producto</h5>
+        </div>
+        <div class="card-body">
+            <form action="/add-product-form" method="post">
+                <div class="mb-3">
+                    <label for="id" class="form-label">ID:</label>
+                    <input type="number" class="form-control" name="id" required>
+                </div>
+                <div class="mb-3">
+                    <label for="name" class="form-label">Nombre:</label>
+                    <input type="text" class="form-control" name="name" required>
+                </div>
+                <div class="mb-3">
+                    <label for="price" class="form-label">Precio:</label>
+                    <input type="number" step="0.01" class="form-control" name="price" required>
+                </div>
+                <div class="mb-3">
+                    <label for="stock" class="form-label">Stock:</label>
+                    <input type="number" class="form-control" name="stock" required>
+                </div>
+                <button type="submit" class="btn btn-danger w-100 mb-3">Agregar</button>
+                <a href="/dashboard" class="btn btn-outline-secondary w-100">Volver al Dashboard</a>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
     """
 
 @app.post("/add-product-form", response_class=HTMLResponse)
 async def add_product_form_post(id: int = Form(...), name: str = Form(...), price: float = Form(...), stock: int = Form(...)):
     central_inventory[id] = Product(id=id, name=name, price=price, stock=stock)
-    # Usamos .model_dump() para compatibilidad con Pydantic v2/v1 (dict())
     asyncio.create_task(sync_with_branches("POST", "/inventory", {"id": id, "name": name, "price": price, "stock": stock}))
-    return HTMLResponse("<h3>✅ Producto agregado y sincronizado!</h3><a href='/dashboard'>Volver</a>")
+    return HTMLResponse("""
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Producto Agregado</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #FAFAFA; text-align: center; padding-top: 50px; }
+        .btn-danger { background-color: #ED4040; border-color: #ED4040; }
+        .btn-danger:hover { background-color: #D33030; border-color: #D33030; }
+    </style>
+</head>
+<body>
+    <div class="alert alert-success mx-auto" style="max-width: 400px;" role="alert">
+        <h3>✅ Producto agregado y sincronizado!</h3>
+        <a href="/dashboard" class="btn btn-danger mt-3">Volver al Dashboard</a>
+    </div>
+</body>
+</html>
+    """)
 
 @app.get("/edit-product/{product_id}", response_class=HTMLResponse)
 async def edit_product_form(product_id: int):
     if product_id not in central_inventory:
-        return HTMLResponse("<h3>❌ Producto no encontrado.</h3><a href='/dashboard'>Volver</a>")
+        return HTMLResponse("""
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Error</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>body { background-color: #FAFAFA; text-align: center; padding-top: 50px; }</style>
+</head>
+<body>
+    <div class="alert alert-danger mx-auto" style="max-width: 400px;" role="alert">
+        <h3>❌ Producto no encontrado.</h3>
+        <a href="/dashboard" class="btn btn-secondary mt-3">Volver al Dashboard</a>
+    </div>
+</body>
+</html>
+        """)
     p = central_inventory[product_id]
     return f"""
-    <h1>Editar Producto</h1>
-    <form action="/edit-product/{product_id}" method="post">
-        <label>Nombre:</label><br><input type="text" name="name" value="{p.name}" required><br>
-        <label>Precio:</label><br><input type="number" step="0.01" name="price" value="{p.price}" required><br>
-        <label>Stock:</label><br><input type="number" name="stock" value="{p.stock}" required><br>
-        <button type="submit">Guardar</button>
-    </form>
-    <a href="/dashboard">Volver</a>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>EcoMarket Central - Editar Producto</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {{ background-color: #FAFAFA; font-family: 'Segoe UI', sans-serif; color: #333; }}
+        .card {{ border: none; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); background-color: #fff; max-width: 400px; margin: 50px auto; }}
+        .card-header.bg-coral {{ background-color: #F06060; color: #fff; font-weight: 600; }}
+        .btn-danger {{ background-color: #ED4040; border-color: #ED4040; }}
+        .btn-danger:hover {{ background-color: #D33030; border-color: #D33030; }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="card-header bg-coral">
+            <h5>Editar Producto ID: {product_id}</h5>
+        </div>
+        <div class="card-body">
+            <form action="/edit-product/{product_id}" method="post">
+                <div class="mb-3">
+                    <label for="name" class="form-label">Nombre:</label>
+                    <input type="text" class="form-control" name="name" value="{p.name}" required>
+                </div>
+                <div class="mb-3">
+                    <label for="price" class="form-label">Precio:</label>
+                    <input type="number" step="0.01" class="form-control" name="price" value="{p.price}" required>
+                </div>
+                <div class="mb-3">
+                    <label for="stock" class="form-label">Stock:</label>
+                    <input type="number" class="form-control" name="stock" value="{p.stock}" required>
+                </div>
+                <button type="submit" class="btn btn-danger w-100 mb-3">Guardar Cambios</button>
+                <a href="/dashboard" class="btn btn-outline-secondary w-100">Volver al Dashboard</a>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
     """
 
 @app.post("/edit-product/{product_id}", response_class=HTMLResponse)
 async def edit_product(product_id: int, name: str = Form(...), price: float = Form(...), stock: int = Form(...)):
     if product_id not in central_inventory:
-        return HTMLResponse("<h3>❌ Producto no encontrado.</h3><a href='/dashboard'>Volver</a>")
+        return HTMLResponse("""
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Error</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>body { background-color: #FAFAFA; text-align: center; padding-top: 50px; }</style>
+</head>
+<body>
+    <div class="alert alert-danger mx-auto" style="max-width: 400px;" role="alert">
+        <h3>❌ Producto no encontrado.</h3>
+        <a href="/dashboard" class="btn btn-secondary mt-3">Volver al Dashboard</a>
+    </div>
+</body>
+</html>
+        """)
     central_inventory[product_id] = Product(id=product_id, name=name, price=price, stock=stock)
     asyncio.create_task(sync_with_branches("PUT", f"/inventory/{product_id}", {"id": product_id, "name": name, "price": price, "stock": stock}))
-    return HTMLResponse("<h3>✅ Producto actualizado y sincronizado!</h3><a href='/dashboard'>Volver</a>")
+    return HTMLResponse("""
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Producto Actualizado</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #FAFAFA; text-align: center; padding-top: 50px; }
+        .btn-danger { background-color: #ED4040; border-color: #ED4040; }
+        .btn-danger:hover { background-color: #D33030; border-color: #D33030; }
+    </style>
+</head>
+<body>
+    <div class="alert alert-success mx-auto" style="max-width: 400px;" role="alert">
+        <h3>✅ Producto actualizado y sincronizado!</h3>
+        <a href="/dashboard" class="btn btn-danger mt-3">Volver al Dashboard</a>
+    </div>
+</body>
+</html>
+    """)
 
 @app.get("/delete-product/{product_id}", response_class=HTMLResponse)
 async def delete_product_form(product_id: int):
     if product_id not in central_inventory:
-        return HTMLResponse("<h3>❌ Producto no encontrado.</h3><a href='/dashboard'>Volver</a>")
+        return HTMLResponse("""
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Error</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>body { background-color: #FAFAFA; text-align: center; padding-top: 50px; }</style>
+</head>
+<body>
+    <div class="alert alert-danger mx-auto" style="max-width: 400px;" role="alert">
+        <h3>❌ Producto no encontrado.</h3>
+        <a href="/dashboard" class="btn btn-secondary mt-3">Volver al Dashboard</a>
+    </div>
+</body>
+</html>
+        """)
     removed = central_inventory.pop(product_id)
     asyncio.create_task(sync_with_branches("DELETE", f"/inventory/{product_id}"))
-    return HTMLResponse(f"<h3>🗑️ Producto '{removed.name}' eliminado y sincronizado!</h3><a href='/dashboard'>Volver</a>")
+    return HTMLResponse(f"""
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Producto Eliminado</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {{ background-color: #FAFAFA; text-align: center; padding-top: 50px; }}
+        .btn-danger {{ background-color: #ED4040; border-color: #ED4040; }}
+        .btn-danger:hover {{ background-color: #D33030; border-color: #D33030; }}
+    </style>
+</head>
+<body>
+    <div class="alert alert-warning mx-auto" style="max-width: 400px;" role="alert">
+        <h3>🗑️ Producto '{removed.name}' eliminado y sincronizado!</h3>
+        <a href="/dashboard" class="btn btn-danger mt-3">Volver al Dashboard</a>
+    </div>
+</body>
+</html>
+    """)
 
-# ===== FORMULARIOS DE NUEVA VENTA (Se mantienen para testing interno/manual) =====
+# ===== FORMULARIOS DE NUEVA VENTA (Ajustados al estilo) =====
 @app.get("/new-sale", response_class=HTMLResponse, tags=["Dashboard"])
 async def new_sale_form():
     options_html = "".join([
-        f"<option value='{p.name}' data-id='{p.id}'>" for p in central_inventory.values()
+        f"<option value='{p.name}' data-id='{p.id}' data-price='{p.price}'>" for p in central_inventory.values()
     ])
     
     return f"""
-    <html>
-        <head>
-            <title>🌿 Registrar Nueva Venta</title>
-            <style>
-                body {{ font-family: Arial; margin: 30px; }}
-                input, select {{ padding: 5px; margin: 5px 0; width: 250px; }}
-                button {{ padding: 8px 15px; background-color: #4CAF50; color: white; border: none; cursor: pointer; }}
-                button:hover {{ background-color: #45a049; }}
-            </style>
-        </head>
-        <body>
-            <h1>Registrar Nueva Venta (Test)</h1>
-            <p>Este formulario solo actualiza el stock central, NO es la sucursal.</p>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>EcoMarket Central - Registrar Venta</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {{ background-color: #FAFAFA; font-family: 'Segoe UI', sans-serif; color: #333; }}
+        .card {{ border: none; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); background-color: #fff; max-width: 450px; margin: 50px auto; }}
+        .card-header.bg-intense {{ background-color: #ED4040; color: #fff; font-weight: 600; }}
+        .btn-danger {{ background-color: #ED4040; border-color: #ED4040; }}
+        .btn-danger:hover {{ background-color: #D33030; border-color: #D33030; }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="card-header bg-intense">
+            <h5>Registrar Nueva Venta (Test Manual)</h5>
+        </div>
+        <div class="card-body">
+            <p class="text-muted small">Este formulario solo actualiza el stock central, NO es la sucursal.</p>
             <form action="/submit-sale" method="post" id="saleForm">
-                <label>Sucursal (ID de Origen):</label><br>
-                <input type="text" name="branch_id" value="Central_Manual" required><br>
-
-                <label>Producto:</label><br>
-                <input list="productos" id="productInput" name="product_name" placeholder="Escribe para buscar..." required>
-                <datalist id="productos">
-                    {options_html}
-                </datalist>
-                <input type="hidden" name="product_id" id="product_id_hidden"><br>
-                <input type="hidden" name="sale_id" value="Central_Manual_{uuid.uuid4().hex[:8]}"><br>
-
-                <label>Cantidad:</label><br>
-                <input type="number" name="quantity_sold" value="1" min="1" required><br>
-
-                <label>Dinero Recibido:</label><br>
-                <input type="number" step="0.01" name="money_received" value="0.0" required><br><br>
-
-                <button type="submit">Enviar Venta</button>
+                <div class="mb-3">
+                    <label for="branch_id" class="form-label fw-semibold">Sucursal (ID de Origen):</label>
+                    <input type="text" class="form-control" name="branch_id" value="Central_Manual" required>
+                </div>
+                <div class="mb-3">
+                    <label for="productInput" class="form-label fw-semibold">Producto:</label>
+                    <input list="productos" id="productInput" class="form-control" name="product_name" placeholder="Escribe para buscar..." required>
+                    <datalist id="productos">
+                        {options_html}
+                    </datalist>
+                    <input type="hidden" name="product_id" id="product_id_hidden">
+                    <input type="hidden" name="sale_id" value="Central_Manual_{{uuid.uuid4().hex[:8]}}">
+                </div>
+                <div class="mb-3">
+                    <label for="quantity_sold" class="form-label fw-semibold">Cantidad:</label>
+                    <input type="number" class="form-control" name="quantity_sold" value="1" min="1" required>
+                </div>
+                <div class="mb-3">
+                    <label for="money_received" class="form-label fw-semibold">Dinero Recibido:</label>
+                    <input type="number" step="0.01" class="form-control" name="money_received" value="0.0" required>
+                </div>
+                
+                <button type="submit" class="btn btn-danger w-100 mb-3">Enviar Venta</button>
+                <a href="/dashboard" class="btn btn-outline-secondary w-100">Volver al Dashboard</a>
             </form>
+        </div>
+    </div>
 
-            <script>
-                const productInput = document.getElementById('productInput');
-                const productIdHidden = document.getElementById('product_id_hidden');
-                const options = document.querySelectorAll('#productos option');
+    <script>
+        const productInput = document.getElementById('productInput');
+        const productIdHidden = document.getElementById('product_id_hidden');
+        const options = document.querySelectorAll('#productos option');
 
-                productInput.addEventListener('input', function() {{
-                    const val = this.value;
-                    const match = Array.from(options).find(o => o.value === val);
-                    if(match) {{
-                        productIdHidden.value = match.dataset.id;
-                    }} else {{
-                        productIdHidden.value = '';
-                    }}
-                }});
-            </script>
-        </body>
-    </html>
+        productInput.addEventListener('input', function() {{
+            const val = this.value;
+            const match = Array.from(options).find(o => o.value === val);
+            if(match) {{
+                productIdHidden.value = match.dataset.id;
+            }} else {{
+                productIdHidden.value = '';
+            }}
+        }});
+    </script>
+</body>
+</html>
     """
 
 @app.post("/submit-sale", response_class=HTMLResponse, tags=["Dashboard"])
@@ -2286,22 +2535,56 @@ async def submit_sale(
     product_id: int = Form(...),
     quantity_sold: int = Form(...),
     money_received: float = Form(...),
-    sale_id: Optional[str] = Form(None) # AÑADIDO: sale_id
+    sale_id: Optional[str] = Form(None)
 ):
     if product_id not in central_inventory:
-        return HTMLResponse(content="<h3>❌ Producto no encontrado.</h3><a href='/new-sale'>Volver</a>")
+        return HTMLResponse(content="""
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Error</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>body { background-color: #FAFAFA; text-align: center; padding-top: 50px; }</style>
+</head>
+<body>
+    <div class="alert alert-danger mx-auto" style="max-width: 400px;" role="alert">
+        <h3>❌ Producto no encontrado.</h3>
+        <a href="/new-sale" class="btn btn-danger mt-3">Volver</a>
+    </div>
+</body>
+</html>
+        """)
     
     product = central_inventory[product_id]
     total_amount = product.price * quantity_sold
     change = money_received - total_amount
+    
+    if change < 0:
+        return HTMLResponse(content=f"""
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Error Venta</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>body {{ background-color: #FAFAFA; text-align: center; padding-top: 50px; }}</style>
+</head>
+<body>
+    <div class="alert alert-danger mx-auto" style="max-width: 500px;" role="alert">
+        <h3>❌ Dinero insuficiente.</h3>
+        <p><b>Total a pagar:</b> ${total_amount:.2f}</p>
+        <p><b>Dinero recibido:</b> ${money_received:.2f}</p>
+        <p>Faltan: ${abs(change):.2f}</p>
+        <a href="/new-sale" class="btn btn-secondary mt-3">Volver al formulario</a>
+    </div>
+</body>
+</html>
+        """)
 
-    # Si el sale_id no viene (por ejemplo, del modal antiguo), generar uno simple
     if not sale_id:
         sale_id = f"Central_Manual_{uuid.uuid4().hex[:8]}"
 
-    # Usamos la lógica unificada para actualizar el stock y registrar la venta
     notification_data = {
-        "sale_id": sale_id, # INCLUIDO: sale_id
+        "sale_id": sale_id,
         "branch_id": branch_id,
         "product_id": product_id,
         "quantity_sold": quantity_sold,
@@ -2313,18 +2596,33 @@ async def submit_sale(
     process_sale_notification(notification_data)
 
     return HTMLResponse(content=f"""
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Venta Exitosa</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {{ background-color: #FAFAFA; text-align: center; padding-top: 50px; }}
+        .btn-danger {{ background-color: #ED4040; border-color: #ED4040; }}
+        .btn-danger:hover {{ background-color: #D33030; border-color: #D33030; }}
+    </style>
+</head>
+<body>
+    <div class="alert alert-success mx-auto" style="max-width: 500px;" role="alert">
         <h3>✅ Venta registrada correctamente!</h3>
         <p><b>ID Venta:</b> {sale_id}</p>
-        <p>{branch_id} vendió {quantity_sold}x {product.name} por ${total_amount}</p>
-        <p><b>Dinero recibido:</b> ${money_received}</p>
-        <p><b>Cambio:</b> ${change}</p>
-        <a href="/new-sale">Registrar otra venta</a> | <a href="/dashboard">Ir al Dashboard</a>
+        <p>{branch_id} vendió {quantity_sold}x {product.name} por <b>${total_amount:.2f}</b></p>
+        <p>Dinero recibido: ${money_received:.2f} | Cambio: <b>${change:.2f}</b></p>
+        <a href="/new-sale" class="btn btn-danger me-2 mt-3">Registrar otra venta</a>
+        <a href="/dashboard" class="btn btn-outline-danger mt-3">Ir al Dashboard</a>
+    </div>
+</body>
+</html>
     """)
 
 # ===== CORRER SERVIDOR (se mantiene) =====
 if __name__ == "__main__":
     import uvicorn
-    # El worker de RabbitMQ se lanza en el hook 'startup'
     uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
 SUCURSAL - API
@@ -2796,7 +3094,7 @@ async def register_user_and_publish(
     
     # Retorna una respuesta HTML de éxito
     return HTMLResponse(content=f"""
-        <h3>✅ Usuario registrado!</h3>
+        <h3>Usuario registrado!</h3>
         <p><b>{user.nombre} ({user.email})</b>. Evento UsuarioCreado publicado.</p>
         <a href="/dashboard">Volver al Dashboard</a>
     """)
@@ -2814,7 +3112,7 @@ async def register_user_form():
 <body>
     <div class="container">
         <h1>Registro de Nuevo Usuario</h1>
-        <p>Simula la creación de un usuario. Esto publica un evento Pub/Sub independiente de las ventas.</p>
+        <p>Creación de un usuario. (Evento Pub/Sub independiente de las ventas)</p>
         <form action="/users/register" method="post">
             <div class="mb-3">
                 <label for="nombre" class="form-label">Nombre:</label>
