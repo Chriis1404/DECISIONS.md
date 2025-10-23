@@ -1551,3 +1551,1740 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8002)
 ```
+ACTIVIDAD 4
+
+CENTRAL - API
+```
+from fastapi import FastAPI, HTTPException, Form
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, field_validator
+from typing import Dict, List, Union, Optional
+from datetime import datetime
+import os
+import logging
+import httpx
+import asyncio
+import json
+import uuid
+import time # Importar time para el reintento
+import sys # Importar sys para el control de errores
+
+### NUEVO: Importaciones para RabbitMQ Worker
+import pika
+from threading import Thread
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="🌿 EcoMarket Central API",
+    description="Servidor central que gestiona inventario maestro y recibe notificaciones de sucursales.",
+    version="4.0.0 (Soporte Modos 5 y 6)", # Versión actualizada
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# ====================================================================
+# === CONFIGURACIÓN RABBITMQ MULTI-MODO (VENTAS Y USUARIOS) ===
+# ====================================================================
+BRANCHES = os.getenv("BRANCHES", "http://sucursal-demo:8002").split(",")
+
+# Credenciales comunes
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
+RABBITMQ_USER = os.getenv("RABBITMQ_USER", "ecomarket_user")
+RABBITMQ_PASS = os.getenv("RABBITMQ_PASS", "ecomarket_password")
+
+# --- MODOS VENTAS (Implementación previa) ---
+QUEUE_DIRECT = os.getenv("RABBITMQ_QUEUE_DIRECT", "ventas_central_direct") 
+EXCHANGE_DIRECT = os.getenv("RABBITMQ_EXCHANGE_DIRECT", "notificaciones_direct") 
+QUEUE_FANOUT = "ventas_central_fanout"
+EXCHANGE_FANOUT = os.getenv("RABBITMQ_EXCHANGE_FANOUT", "ventas_global_fanout") 
+
+# --- NUEVOS MODOS: FANOUT (Pub/Sub - Usuarios) ---
+EXCHANGE_USER_EVENTS = os.getenv("RABBITMQ_EXCHANGE_USERS", "user_events_fanout")
+QUEUE_USER_NOTIFS = "user_notifs_central" # Cola para NotificacionesService (Email)
+QUEUE_USER_STATS = "user_stats_central" # Cola para EstadísticasService (Conteo)
+# ====================================================================
+
+
+# ===== MODELOS (Se mantienen) =====
+class Product(BaseModel):
+    id: int
+    name: str
+    price: float
+    stock: int
+
+class SaleNotification(BaseModel):
+    sale_id: Optional[str] = None 
+    branch_id: str
+    product_id: int
+    quantity_sold: int
+    timestamp: Union[datetime, str]
+    money_received: Optional[float] = None # Hacemos opcional para manejar notificaciones sin detalles de pago
+    total_amount: float
+    change: Optional[float] = None
+
+    @field_validator("timestamp", mode="before")
+    def parse_timestamp(cls, v):
+        if isinstance(v, str):
+            return datetime.fromisoformat(v)
+        return v
+    
+    class Config:
+        extra = "ignore" 
+
+# ===== INVENTARIO CENTRAL (Se mantiene) =====
+central_inventory: Dict[int, Product] = {
+    1: Product(id=1, name="Manzanas Orgánicas", price=2.50, stock=100),
+    2: Product(id=2, name="Pan Integral", price=1.80, stock=50),
+    3: Product(id=3, name="Leche Deslactosada", price=3.20, stock=30),
+    4: Product(id=4, name="Café Premium", price=8.90, stock=25),
+    5: Product(id=5, name="Quinoa", price=12.50, stock=15)
+}
+
+# ===== HISTORIAL DE VENTAS (Se mantiene) =====
+sales_notifications: List[SaleNotification] = []
+
+# ====================================================================
+# === LÓGICA UNIFICADA DE PROCESAMIENTO DE VENTAS (Se mantiene) ===
+# ====================================================================
+
+def process_sale_notification(notification_data: dict):
+    """Lógica de negocio para registrar una venta y actualizar el stock (usada por HTTP y AMQP)."""
+    try:
+        # Crea el objeto Pydantic a partir del diccionario
+        notification = SaleNotification(**notification_data)
+
+        if notification.product_id not in central_inventory:
+            logger.error(f"❌ Venta fallida: Producto ID {notification.product_id} no encontrado en inventario central.")
+            return
+
+        product = central_inventory[notification.product_id]
+        
+        # Actualizar stock (nunca negativo)
+        product.stock = max(0, product.stock - notification.quantity_sold)
+        
+        sales_notifications.append(notification)
+
+        logger.info(f"🟢 [VENTA PROCESADA] {notification.branch_id} - {notification.quantity_sold}x {product.name} | Stock: {product.stock}")
+        return product.stock
+
+    except Exception as e:
+        logger.error(f"❌ Error al procesar la venta: {e}. Datos: {notification_data}")
+###################
+
+# Insertar después de la definición de process_sale_notification (Lógica de Usuarios)
+
+# Contador global para el EstadísticasService (Inicialización)
+TOTAL_USERS_CREATED = 0 
+
+
+def process_user_created_event(message_data: dict, worker_name: str):
+    """Procesa el evento USUARIOCREADO (Envía email o actualiza estadísticas)."""
+    global TOTAL_USERS_CREATED
+    
+    # Simple validación de contrato
+    if message_data.get('event_type') != 'UsuarioCreado':
+        return 
+
+    if worker_name == "Notificaciones":
+        # Lógica de NotificacionesService (Email simulado)
+        logger.info(f"📧 [NOTIFICACIONES] Enviando email simulado a {message_data.get('email')}")
+        time.sleep(0.5) # Simular latencia de envío de email
+        logger.info(f"✅ Email simulado completado.")
+    
+    elif worker_name == "Estadisticas":
+        # Lógica de EstadísticasService (Conteo)
+        TOTAL_USERS_CREATED += 1
+        logger.info(f"🎁 [ESTADÍSTICAS] Nuevo usuario ({message_data.get('nombre')}). Total: {TOTAL_USERS_CREATED}")
+        time.sleep(0.1)
+    
+    else:
+        logger.warning(f"Worker desconocido '{worker_name}' procesando evento de usuario.")
+
+
+# ====================================================================
+# === WORKERS/CONSUMIDORES DE RABBITMQ (Nueva Estructura) ===
+# ====================================================================
+
+# Reemplazar las funciones callback y start_rabbitmq_worker completas
+
+def callback(ch, method, properties, body):
+    """Callback común para todos los mensajes (Ventas y Usuarios)."""
+    try:
+        notification_data = json.loads(body.decode())
+        exchange = method.exchange
+        
+        # 1. Identificar si es un evento de VENTA
+        if exchange in [EXCHANGE_DIRECT, EXCHANGE_FANOUT]:
+            # El worker de Ventas (Direct o Fanout) siempre actualiza el inventario
+            process_sale_notification(notification_data)
+        
+        # 2. Identificar si es un evento de USUARIO
+        elif exchange == EXCHANGE_USER_EVENTS:
+            # Determinar qué worker está consumiendo por el nombre de su cola (consumer_tag)
+            queue = method.consumer_tag 
+            worker_name = "Notificaciones" if queue == QUEUE_USER_NOTIFS else "Estadisticas"
+            logger.info(f"📥 [USUARIOS - {worker_name}] Evento recibido. Procesando acción...")
+            process_user_created_event(notification_data, worker_name)
+
+        # Confirma el mensaje a RabbitMQ (ACK)
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+        
+    except Exception as e:
+        logger.error(f"❌ Error al procesar mensaje de RabbitMQ: {e}")
+        # Rechazar el mensaje (vuelve a la cola, para reintento)
+        ch.basic_reject(delivery_tag=method.delivery_tag, requeue=True)
+
+
+def start_rabbitmq_worker(queue_name: str, exchange_name: str, exchange_type: str, routing_key: str):
+    """Establece la conexión y comienza a consumir para un modo específico."""
+    logger.info(f"✨ Iniciando Worker para {exchange_name} ({exchange_type.upper()}). Cola: {queue_name}")
+    while True:
+        try:
+            credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
+            params = pika.ConnectionParameters(
+                host=RABBITMQ_HOST, 
+                port=5672,
+                credentials=credentials,
+                heartbeat=600,
+                blocked_connection_timeout=300,
+            )
+            connection = pika.BlockingConnection(params)
+            channel = connection.channel()
+
+            channel.exchange_declare(exchange=exchange_name, exchange_type=exchange_type, durable=True)
+            channel.queue_declare(queue=queue_name, durable=True)
+            
+            consumer_tag = queue_name # Usado en el callback para identificar el worker
+
+            channel.queue_bind(
+                exchange=exchange_name, queue=queue_name, routing_key=routing_key
+            )
+
+            channel.basic_consume(
+                queue=queue_name, 
+                on_message_callback=callback,
+                auto_ack=False,
+                consumer_tag=consumer_tag # CRÍTICO: Pasa el nombre de la cola como tag
+            )
+
+            logger.info(f'✅ Worker {queue_name} listo. Consumiendo...')
+            channel.start_consuming()
+
+        except pika.exceptions.AMQPConnectionError as e:
+            logger.error(f"❌ Fallo en la conexión a RabbitMQ (Worker {queue_name}): {e}. Reintentando en 5s...")
+            time.sleep(5)
+        except pika.exceptions.ChannelClosedByBroker as e:
+            logger.error(f"❌ Canal cerrado por el broker (Worker {queue_name}): {e}. Reintento de reconexión.")
+            time.sleep(5)
+        except Exception as e:
+            logger.error(f"❌ Error crítico en el worker de RabbitMQ ({queue_name}): {e}. Terminando thread.")
+            break
+
+# ===== HOOK DE INICIO DE FASTAPI (INICIA AMBOS WORKERS) =====
+# Reemplazar la función startup_event completa
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("🚀 Iniciando Central API con 4 Workers (Ventas y Usuarios)...")
+    
+    # Worker 1: Ventas - MODO 5 (Punto-a-Punto - Inventario)
+    Thread(target=start_rabbitmq_worker, args=(QUEUE_DIRECT, EXCHANGE_DIRECT, 'direct', QUEUE_DIRECT), daemon=True).start()
+    
+    # Worker 2: Ventas - MODO 6 (Fanout/Pub-Sub - Inventario)
+    Thread(target=start_rabbitmq_worker, args=(QUEUE_FANOUT, EXCHANGE_FANOUT, 'fanout', ''), daemon=True).start()
+    
+    # Worker 3: Usuarios - NotificacionesService (Fanout/Pub-Sub - Email)
+    Thread(target=start_rabbitmq_worker, args=(QUEUE_USER_NOTIFS, EXCHANGE_USER_EVENTS, 'fanout', ''), daemon=True).start()
+    
+    # Worker 4: Usuarios - EstadísticasService (Fanout/Pub-Sub - Conteo)
+    Thread(target=start_rabbitmq_worker, args=(QUEUE_USER_STATS, EXCHANGE_USER_EVENTS, 'fanout', ''), daemon=True).start()
+    
+    logger.info("✅ 4 Workers de RabbitMQ (Ventas y Usuarios) iniciados.")
+
+
+# ===== FUNCIONES DE SINCRONIZACIÓN (se mantienen) =====
+async def sync_with_branches(method: str, endpoint: str, data: dict = None):
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        tasks = []
+        for branch in BRANCHES:
+            url = f"{branch}{endpoint}"
+            if method == "POST":
+                tasks.append(client.post(url, json=data))
+            elif method == "PUT":
+                tasks.append(client.put(url, json=data))
+            elif method == "DELETE":
+                tasks.append(client.delete(url))
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for branch, res in zip(BRANCHES, results):
+            if isinstance(res, Exception):
+                logger.error(f"❌ Error al sincronizar con {branch}: {res}")
+            elif res.status_code >= 400:
+                logger.error(f"⚠️ Sucursal {branch} devolvió {res.status_code}")
+            else:
+                logger.info(f"✅ Sincronizado con {branch} ({endpoint})")
+
+# ===== ENDPOINTS GENERALES (Se mantienen) =====
+@app.get("/", tags=["General"])
+async def root():
+    return {
+        "service": "🌿 EcoMarket Central API",
+        "status": "operational",
+        "total_products": len(central_inventory),
+        "total_notifications": len(sales_notifications)
+    }
+
+# ===== INVENTARIO (Se mantienen) =====
+@app.get("/inventory", response_model=List[Product], tags=["Inventario"])
+async def get_inventory():
+    return list(central_inventory.values())
+
+@app.post("/inventory", response_model=Product, tags=["Inventario"])
+async def add_product(product: Product):
+    if product.id in central_inventory:
+        raise HTTPException(status_code=400, detail="El producto ya existe")
+    central_inventory[product.id] = product
+
+    # 🔄 Sincronizar a sucursales
+    asyncio.create_task(sync_with_branches("POST", "/inventory", product.model_dump())) 
+    return product
+
+@app.put("/inventory/{product_id}", response_model=Product, tags=["Inventario"])
+async def update_product(product_id: int, product: Product):
+    if product_id not in central_inventory:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    central_inventory[product_id] = product
+
+    # 🔄 Sincronizar a sucursales
+    asyncio.create_task(sync_with_branches("PUT", f"/inventory/{product_id}", product.model_dump()))
+    return product
+
+@app.delete("/inventory/{product_id}", tags=["Inventario"])
+async def delete_product(product_id: int):
+    if product_id not in central_inventory:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    removed = central_inventory.pop(product_id)
+
+    # 🔄 Sincronizar a sucursales
+    asyncio.create_task(sync_with_branches("DELETE", f"/inventory/{product_id}"))
+    return {"removed": removed.name, "id": removed.id}
+
+# ===== NOTIFICACIONES DE VENTAS (Mantiene la ruta HTTP para Modos 1-4) =====
+@app.post("/sale-notification", tags=["Ventas"])
+async def sale_notification(notification: SaleNotification):
+    """Recibe una venta (manual o desde sucursal) y la procesa."""
+    updated_stock = process_sale_notification(notification.dict())
+    if updated_stock is None:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    return {"message": "Venta registrada correctamente", "updated_stock": updated_stock}
+#
+@app.get("/dashboard", response_class=HTMLResponse, tags=["Dashboard"])
+async def dashboard():
+    # Cálculo de métricas
+    total_sales_count = len(sales_notifications)
+    total_products_count = len(central_inventory)
+    # Aseguramos que la suma ignore None en total_amount si la notificación vino incompleta
+    total_revenue = sum(n.total_amount for n in sales_notifications if n.total_amount is not None) 
+
+    # Construcción dinámica del inventario
+    inventory_html = "".join([
+        f"<tr class='{'table-danger' if p.stock < 10 else ''}'>"
+        f"<td>{p.id}</td>"
+        f"<td>{p.name}</td>"
+        f"<td>${p.price:.2f}</td>"
+        f"<td>{p.stock}</td>"
+        f"</tr>"
+        for p in central_inventory.values()
+    ])
+
+    # Historial de ventas
+    notifications_html = "".join([
+        f"<tr><td>{n.timestamp.strftime('%Y-%m-%d %H:%M:%S')}</td>"
+        f"<td>{n.branch_id}</td>"
+        f"<td>{central_inventory.get(n.product_id, Product(id=0,name='❓',price=0,stock=0)).name}</td>"
+        f"<td>{n.quantity_sold}</td>"
+        f"<td>${n.total_amount:.2f}</td>"
+        f"<td>${n.money_received:.2f}</td>"
+        f"<td>${n.change:.2f}</td>"
+        f"<td class='text-muted small'>{(n.sale_id.split('_')[-1].split('.')[0]) if n.sale_id else 'N/A'}</td></tr>"
+        for n in sales_notifications
+    ])
+
+    return f"""
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EcoMarket Central</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+<style>
+body {{ background-color: #FAFAFA; font-family: 'Segoe UI', sans-serif; color: #333; }}
+.navbar {{ background-color: #ED4040; color: white; padding: 0.8rem 1.5rem; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); }}
+.navbar-brand {{ font-weight: 600; font-size: 1.3rem; color: white !important; }}
+.metrics {{ display: flex; gap: 1rem; align-items: center; margin-right: 1.5rem; }}
+.metric-item {{ 
+    text-align: center; background: rgba(255, 255, 255, 0.15); border-radius: 8px; 
+    padding: 0.4rem 0.8rem; font-size: 0.85rem; color: #fff; min-width: 90px; 
+    box-shadow: inset 0 0 6px rgba(255, 255, 255, 0.2); 
+}}
+.metric-item h6 {{ margin: 0; font-size: 0.75rem; font-weight: 500; opacity: 0.9; }}
+.metric-item p {{ margin: 0; font-size: 1rem; font-weight: 600; color: rgba(255,255,255,0.9); }}
+
+.card {{ border: none; border-radius: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.06); background-color: #fff; }}
+.card-header.bg-coral {{ background-color: #F06060; color: #fff; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }}
+.card-header.bg-intense {{ background-color: #ED4040; color: #fff; font-weight: 600; }}
+.table thead th {{ background-color: #ED4040; color: white; border: none; font-weight: 500; }}
+.bg-stats {{ background-color: #007bff; }} /* Estilo para el nuevo contador de usuarios */
+</style>
+</head>
+
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark">
+    <a class="navbar-brand" href="#">EcoMarket Central</a>
+    <div class="ms-auto d-flex align-items-center metrics">
+        <div class="metric-item"><h6>Productos</h6><p>{total_products_count}</p></div>
+        <div class="metric-item"><h6>Ventas</h6><p>{total_sales_count}</p></div>
+        <div class="metric-item"><h6>Recaudación</h6><p>${total_revenue:.2f}</p></div>
+        <div class="metric-item bg-stats"><h6>Usuarios Creados</h6><p>{TOTAL_USERS_CREATED}</p></div>
+        <div class="metric-item"><h6>Servidor🟢</h6></div>
+        <div class="nav-separator"></div>
+        <button class="btn btn-main ms-2" data-bs-toggle="modal" data-bs-target="#addProductModal">Producto</button>
+        <button class="btn btn-main ms-2" data-bs-toggle="modal" data-bs-target="#addSaleModal">Venta</button>
+    </div>
+</nav>
+
+<div class="main-container container mt-4">
+    <div class="row g-4">
+        <div class="col-md-5">
+            <div class="card">
+                <div class="card-header bg-coral">
+                    <span>Inventario Central (Afectado por Ventas)</span>
+                    <button class="edit-btn" onclick="openEditModal()">Editar</button>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height:400px;">
+                        <table class="table table-hover table-sm mb-0 align-middle">
+                            <thead><tr><th>ID</th><th>Producto</th><th>Precio</th><th>Stock</th></tr></thead>
+                            <tbody>{inventory_html}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-7">
+            <div class="card">
+                <div class="card-header bg-intense">Historial de Notificaciones de Ventas</div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height:400px;">
+                        <table class="table table-striped table-sm mb-0 align-middle">
+                            <thead><tr><th>Fecha</th><th>Sucursal</th><th>Producto</th><th>Cant.</th><th>Total</th><th>Recibido</th><th>Cambio</th><th>ID Venta</th></tr></thead>
+                            <tbody>{notifications_html}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="footer container">© 2025 EcoMarket Central — Workers: (Direct/Fanout Ventas) + (Notifs/Stats Usuarios)</div>
+
+<div class="modal fade" id="addProductModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-coral text-white"><h6>Nuevo Producto</h6></div>
+      <form id="addProductForm">
+        <div class="modal-body">
+          <input class="form-control mb-2" name="id" type="number" placeholder="ID" required>
+          <input class="form-control mb-2" name="name" type="text" placeholder="Nombre" required>
+          <input class="form-control mb-2" name="price" type="number" step="0.01" placeholder="Precio" required>
+          <input class="form-control mb-2" name="stock" type="number" placeholder="Stock inicial" required>
+        </div>
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-main w-100">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="addSaleModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-intense text-white"><h6>Registrar Venta</h6></div>
+      <form id="addSaleForm">
+        <div class="modal-body">
+          <input class="form-control mb-2" name="branch_id" value="Central_Manual" type="text" required>
+          <label class="fw-semibold">Selecciona un producto</label>
+          <select class="form-select mb-2" id="productSelect" name="product_id" required>
+            <option value="">-- Cargando productos... --</option>
+          </select>
+          <input class="form-control mb-2" id="quantityInput" name="quantity_sold" type="number" placeholder="Cantidad" required>
+          <input class="form-control mb-2" id="moneyInput" name="money_received" type="number" step="0.01" placeholder="Dinero recibido" required>
+          <input type="hidden" name="sale_id" value="{str(uuid.uuid4())}" id="saleIdManual">
+          <div id="saleSummary" class="text-muted small mt-2"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-main w-100">Registrar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ===== FUNCIONES JS =====
+function openEditModal() {{
+  new bootstrap.Modal(document.getElementById('editInventoryModal')).show();
+}}
+
+// Generar nuevo UUID cada vez que se abre el modal para ventas manuales
+document.getElementById("addSaleModal").addEventListener("show.bs.modal", () => {{
+    const saleIdInput = document.getElementById("saleIdManual");
+    if (saleIdInput) {{
+        // Usar crypto.randomUUID() o una simulación simple si no está disponible
+        saleIdInput.value = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : 'MANUAL-' + Date.now();
+    }}
+}});
+
+// === Cargar productos con badge de stock bajo ===
+document.getElementById("addSaleModal").addEventListener("show.bs.modal", async () => {{
+  const select = document.getElementById("productSelect");
+  select.innerHTML = "<option value=''>-- Cargando productos... --</option>";
+  try {{
+    const res = await fetch("/inventory");
+    const products = await res.json();
+    select.innerHTML = "<option value=''>-- Selecciona un producto --</option>" +
+      products.map(p => {{
+        const badge = p.stock < 10 ? "<span class='badge-low'>Stock Bajo</span>" : "";
+        return `<option value="${{p.id}}" data-price="${{p.price}}" data-stock="${{p.stock}}">
+                ${{p.name}} — $${{p.price.toFixed(2)}} (Stock: ${{p.stock}}) ${{badge}}
+                </option>`;
+      }}).join("");
+  }} catch (err) {{
+    select.innerHTML = "<option value=''>❌ Error al cargar productos</option>";
+  }}
+}});
+
+// === Actualizar resumen ===
+function updateSummary() {{
+  const select = document.getElementById("productSelect");
+  const qty = parseInt(document.getElementById("quantityInput").value) || 0;
+  const money = parseFloat(document.getElementById("moneyInput").value) || 0;
+  const selected = select.options[select.selectedIndex];
+  const summary = document.getElementById("saleSummary");
+
+  if (selected && selected.dataset.price) {{
+    const price = parseFloat(selected.dataset.price);
+    const total = price * qty;
+    const change = money - total;
+    summary.innerHTML = `
+      <div>💰 Precio unitario: $${{price.toFixed(2)}}</div>
+      <div>Total: <b>$${{total.toFixed(2)}}</b></div>
+      <div>Cambio: <b>${{change >= 0 ? "$"+change.toFixed(2) : "❌ Insuficiente"}}</b></div>`;
+  }} else {{
+    summary.innerHTML = "";
+  }}
+}}
+
+document.getElementById("productSelect").addEventListener("change", updateSummary);
+document.getElementById("quantityInput").addEventListener("input", updateSummary);
+document.getElementById("moneyInput").addEventListener("input", updateSummary);
+
+// === Registrar venta ===
+document.getElementById('addSaleForm').addEventListener('submit', async (e) => {{
+  e.preventDefault();
+  const formData = new FormData(e.target);
+  const branch_id = formData.get("branch_id");
+  const product_id = parseInt(formData.get("product_id"));
+  const quantity_sold = parseInt(formData.get("quantity_sold"));
+  const money_received = parseFloat(formData.get("money_received"));
+  const sale_id = formData.get("sale_id"); // Obtener el ID de venta
+
+  const selected = document.getElementById("productSelect").options[
+    document.getElementById("productSelect").selectedIndex
+  ];
+  const price = parseFloat(selected.dataset.price);
+  const total_amount = price * quantity_sold;
+  const change = money_received - total_amount;
+
+  if (!product_id) return showToast("Selecciona un producto válido.", "error");
+  if (money_received < total_amount) return showToast("Dinero insuficiente.", "warning");
+
+  const payload = {{
+    sale_id, // Incluir el ID de venta en el payload
+    branch_id,
+    product_id,
+    quantity_sold,
+    money_received,
+    total_amount,
+    change,
+    timestamp: new Date().toISOString()
+  }};
+
+  try {{
+    const res = await fetch("/sale-notification", {{
+      method: "POST",
+      headers: {{ "Content-Type": "application/json" }},
+      body: JSON.stringify(payload)
+    }});
+    if (res.ok) {{
+      showToast("✅ Venta registrada correctamente.");
+      setTimeout(() => location.reload(), 1500);
+    }} else {{
+      const error = await res.text();
+      console.error("Error venta:", error);
+      showToast("❌ Error al registrar la venta.", "error");
+    }}
+  }} catch (err) {{
+    console.error(err);
+    showToast("❌ Error de conexión.", "error");
+  }}
+}});
+
+function showToast(message, type='success') {{
+  const toast = document.createElement('div');
+  toast.id = 'toast';
+  toast.className = type;
+  toast.innerHTML = message;
+  document.body.appendChild(toast);
+  toast.style.display = 'block';
+  setTimeout(() => toast.remove(), 3500);
+}}
+</script>
+</body>
+</html>
+"""
+
+
+
+
+# ===== FORMULARIOS CRUD (se mantienen) =====
+@app.get("/add-product-form", response_class=HTMLResponse)
+async def add_product_form():
+    return """
+    <h1>Agregar Producto</h1>
+    <form action="/add-product-form" method="post">
+        <label>ID:</label><br><input type="number" name="id" required><br>
+        <label>Nombre:</label><br><input type="text" name="name" required><br>
+        <label>Precio:</label><br><input type="number" step="0.01" name="price" required><br>
+        <label>Stock:</label><br><input type="number" name="stock" required><br>
+        <button type="submit">Agregar</button>
+    </form>
+    <a href="/dashboard">Volver</a>
+    """
+
+@app.post("/add-product-form", response_class=HTMLResponse)
+async def add_product_form_post(id: int = Form(...), name: str = Form(...), price: float = Form(...), stock: int = Form(...)):
+    central_inventory[id] = Product(id=id, name=name, price=price, stock=stock)
+    # Usamos .model_dump() para compatibilidad con Pydantic v2/v1 (dict())
+    asyncio.create_task(sync_with_branches("POST", "/inventory", {"id": id, "name": name, "price": price, "stock": stock}))
+    return HTMLResponse("<h3>✅ Producto agregado y sincronizado!</h3><a href='/dashboard'>Volver</a>")
+
+@app.get("/edit-product/{product_id}", response_class=HTMLResponse)
+async def edit_product_form(product_id: int):
+    if product_id not in central_inventory:
+        return HTMLResponse("<h3>❌ Producto no encontrado.</h3><a href='/dashboard'>Volver</a>")
+    p = central_inventory[product_id]
+    return f"""
+    <h1>Editar Producto</h1>
+    <form action="/edit-product/{product_id}" method="post">
+        <label>Nombre:</label><br><input type="text" name="name" value="{p.name}" required><br>
+        <label>Precio:</label><br><input type="number" step="0.01" name="price" value="{p.price}" required><br>
+        <label>Stock:</label><br><input type="number" name="stock" value="{p.stock}" required><br>
+        <button type="submit">Guardar</button>
+    </form>
+    <a href="/dashboard">Volver</a>
+    """
+
+@app.post("/edit-product/{product_id}", response_class=HTMLResponse)
+async def edit_product(product_id: int, name: str = Form(...), price: float = Form(...), stock: int = Form(...)):
+    if product_id not in central_inventory:
+        return HTMLResponse("<h3>❌ Producto no encontrado.</h3><a href='/dashboard'>Volver</a>")
+    central_inventory[product_id] = Product(id=product_id, name=name, price=price, stock=stock)
+    asyncio.create_task(sync_with_branches("PUT", f"/inventory/{product_id}", {"id": product_id, "name": name, "price": price, "stock": stock}))
+    return HTMLResponse("<h3>✅ Producto actualizado y sincronizado!</h3><a href='/dashboard'>Volver</a>")
+
+@app.get("/delete-product/{product_id}", response_class=HTMLResponse)
+async def delete_product_form(product_id: int):
+    if product_id not in central_inventory:
+        return HTMLResponse("<h3>❌ Producto no encontrado.</h3><a href='/dashboard'>Volver</a>")
+    removed = central_inventory.pop(product_id)
+    asyncio.create_task(sync_with_branches("DELETE", f"/inventory/{product_id}"))
+    return HTMLResponse(f"<h3>🗑️ Producto '{removed.name}' eliminado y sincronizado!</h3><a href='/dashboard'>Volver</a>")
+
+# ===== FORMULARIOS DE NUEVA VENTA (Se mantienen para testing interno/manual) =====
+@app.get("/new-sale", response_class=HTMLResponse, tags=["Dashboard"])
+async def new_sale_form():
+    options_html = "".join([
+        f"<option value='{p.name}' data-id='{p.id}'>" for p in central_inventory.values()
+    ])
+    
+    return f"""
+    <html>
+        <head>
+            <title>🌿 Registrar Nueva Venta</title>
+            <style>
+                body {{ font-family: Arial; margin: 30px; }}
+                input, select {{ padding: 5px; margin: 5px 0; width: 250px; }}
+                button {{ padding: 8px 15px; background-color: #4CAF50; color: white; border: none; cursor: pointer; }}
+                button:hover {{ background-color: #45a049; }}
+            </style>
+        </head>
+        <body>
+            <h1>Registrar Nueva Venta (Test)</h1>
+            <p>Este formulario solo actualiza el stock central, NO es la sucursal.</p>
+            <form action="/submit-sale" method="post" id="saleForm">
+                <label>Sucursal (ID de Origen):</label><br>
+                <input type="text" name="branch_id" value="Central_Manual" required><br>
+
+                <label>Producto:</label><br>
+                <input list="productos" id="productInput" name="product_name" placeholder="Escribe para buscar..." required>
+                <datalist id="productos">
+                    {options_html}
+                </datalist>
+                <input type="hidden" name="product_id" id="product_id_hidden"><br>
+                <input type="hidden" name="sale_id" value="Central_Manual_{uuid.uuid4().hex[:8]}"><br>
+
+                <label>Cantidad:</label><br>
+                <input type="number" name="quantity_sold" value="1" min="1" required><br>
+
+                <label>Dinero Recibido:</label><br>
+                <input type="number" step="0.01" name="money_received" value="0.0" required><br><br>
+
+                <button type="submit">Enviar Venta</button>
+            </form>
+
+            <script>
+                const productInput = document.getElementById('productInput');
+                const productIdHidden = document.getElementById('product_id_hidden');
+                const options = document.querySelectorAll('#productos option');
+
+                productInput.addEventListener('input', function() {{
+                    const val = this.value;
+                    const match = Array.from(options).find(o => o.value === val);
+                    if(match) {{
+                        productIdHidden.value = match.dataset.id;
+                    }} else {{
+                        productIdHidden.value = '';
+                    }}
+                }});
+            </script>
+        </body>
+    </html>
+    """
+
+@app.post("/submit-sale", response_class=HTMLResponse, tags=["Dashboard"])
+async def submit_sale(
+    branch_id: str = Form(...),
+    product_id: int = Form(...),
+    quantity_sold: int = Form(...),
+    money_received: float = Form(...),
+    sale_id: Optional[str] = Form(None) # AÑADIDO: sale_id
+):
+    if product_id not in central_inventory:
+        return HTMLResponse(content="<h3>❌ Producto no encontrado.</h3><a href='/new-sale'>Volver</a>")
+    
+    product = central_inventory[product_id]
+    total_amount = product.price * quantity_sold
+    change = money_received - total_amount
+
+    # Si el sale_id no viene (por ejemplo, del modal antiguo), generar uno simple
+    if not sale_id:
+        sale_id = f"Central_Manual_{uuid.uuid4().hex[:8]}"
+
+    # Usamos la lógica unificada para actualizar el stock y registrar la venta
+    notification_data = {
+        "sale_id": sale_id, # INCLUIDO: sale_id
+        "branch_id": branch_id,
+        "product_id": product_id,
+        "quantity_sold": quantity_sold,
+        "money_received": money_received,
+        "total_amount": total_amount,
+        "change": change,
+        "timestamp": datetime.now().isoformat()
+    }
+    process_sale_notification(notification_data)
+
+    return HTMLResponse(content=f"""
+        <h3>✅ Venta registrada correctamente!</h3>
+        <p><b>ID Venta:</b> {sale_id}</p>
+        <p>{branch_id} vendió {quantity_sold}x {product.name} por ${total_amount}</p>
+        <p><b>Dinero recibido:</b> ${money_received}</p>
+        <p><b>Cambio:</b> ${change}</p>
+        <a href="/new-sale">Registrar otra venta</a> | <a href="/dashboard">Ir al Dashboard</a>
+    """)
+
+# ===== CORRER SERVIDOR (se mantiene) =====
+if __name__ == "__main__":
+    import uvicorn
+    # El worker de RabbitMQ se lanza en el hook 'startup'
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+SUCURSAL - API
+
+```
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Form
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+from typing import Dict, List, Optional, Union
+from datetime import datetime, timedelta
+import os
+import httpx
+import logging
+import redis
+from enum import Enum
+import asyncio
+import uuid
+import pika
+import json
+import time
+from threading import Thread
+
+# ===== LOGGING =====
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="EcoMarket Sucursal API",
+    description="Gestión de inventario, ventas y registro de usuarios",
+    version="7.0.0 (Modos 5 & 6 + Usuarios)",
+    docs_url="/docs",
+    redoc_url=None
+)
+
+# ===== CONFIGURACIÓN (MODIFICADA para Modos 5 y 6) =====
+BRANCH_ID = os.getenv("BRANCH_ID", "sucursal-demo")
+CENTRAL_API_URL = os.getenv("CENTRAL_API_URL", "http://central:8000")
+
+### Modo de notificación global (1-3: HTTP, 4: Redis, 5: RabbitMQ Directo, 6: RabbitMQ Fanout)
+NOTIF_MODE = int(os.getenv("NOTIF_MODE", "6")) 
+
+# Configuración Redis
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_QUEUE = os.getenv("REDIS_QUEUE", "sales_queue_redis")
+
+def get_redis_client():
+    return redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+
+# Configuración RabbitMQ (Distinción Modo 5 y Modo 6)
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq") 
+RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
+RABBITMQ_USER = os.getenv("RABBITMQ_USER", "ecomarket_user") 
+RABBITMQ_PASS = os.getenv("RABBITMQ_PASS", "ecomarket_password") 
+
+# Modo 5: Directo/Punto-a-Punto (P2P)
+RABBITMQ_QUEUE_DIRECT = os.getenv("RABBITMQ_QUEUE_DIRECT", "ventas_central_direct") 
+RABBITMQ_EXCHANGE_DIRECT = os.getenv("RABBITMQ_EXCHANGE_DIRECT", "notificaciones_direct") 
+
+# Modo 6: Fanout/Pub/Sub (Ventas)
+RABBITMQ_EXCHANGE_FANOUT = os.getenv("RABBITMQ_EXCHANGE_FANOUT", "ventas_global_fanout") 
+
+# --- NUEVA CONFIGURACIÓN PARA USUARIOS (Taller 4) ---
+EXCHANGE_USER_EVENTS = os.getenv("RABBITMQ_EXCHANGE_USERS", "user_events_fanout")
+
+# ===== MODELOS =====
+class Product(BaseModel):
+    id: int
+    name: str
+    price: float
+    stock: int
+
+class SaleRequest(BaseModel):
+    product_id: int
+    quantity: int
+    money_received: float
+
+class SaleResponse(BaseModel):
+    sale_id: str
+    product_id: int
+    product_name: str
+    quantity_sold: int
+    total_amount: float
+    money_received: float
+    change: float
+    timestamp: datetime
+    status: str
+    
+class UserCreate(BaseModel):
+    nombre: str
+    email: str
+
+# ===== CIRCUIT BREAKER (se mantiene) =====
+class CircuitState(Enum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+class CircuitBreaker:
+    def __init__(self, failure_threshold=3, recovery_timeout=30):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failure_count = 0
+        self.last_failure_time: Optional[datetime] = None
+        self.state = CircuitState.CLOSED
+    
+    async def call(self, func, *args, **kwargs):
+        if self.state == CircuitState.OPEN:
+            if self._should_attempt_reset():
+                self.state = CircuitState.HALF_OPEN
+                logger.info("🔄 Circuito HALF_OPEN: probando llamada")
+            else:
+                raise Exception("Circuit breaker abierto")
+        try:
+            result = await func(*args, **kwargs)
+            self._on_success()
+            return result
+        except Exception as e:
+            self._on_failure()
+            raise e
+    
+    def _on_success(self):
+        self.failure_count = 0
+        self.state = CircuitState.CLOSED
+    
+    def _on_failure(self):
+        self.failure_count += 1
+        self.last_failure_time = datetime.now()
+        if self.failure_count >= self.failure_threshold:
+            self.state = CircuitState.OPEN
+            logger.error(f"❌ Circuito OPEN: alcanzado límite de fallos ({self.failure_threshold})")
+    
+    def _should_attempt_reset(self):
+        if not self.last_failure_time:
+            return False
+        return datetime.now() >= self.last_failure_time + timedelta(seconds=self.recovery_timeout)
+
+circuit_breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=60)
+
+# ===== INVENTARIO LOCAL Y HISTORIAL DE VENTAS (se mantiene) =====
+local_inventory: Dict[int, Product] = {
+    1: Product(id=1, name="Manzanas Orgánicas", price=2.50, stock=25),
+    2: Product(id=2, name="Pan Integral", price=1.80, stock=15),
+    3: Product(id=3, name="Leche Deslactosada", price=3.20, stock=8)
+}
+sales_history: List[SaleResponse] = []
+user_db: Dict[str, UserCreate] = {} # Base de datos de usuarios simulada
+
+# =================================================================
+# === FUNCIONES DE NOTIFICACIÓN PARA VENTAS (Paso 1 al 6) =========
+# =================================================================
+
+# Modo 1, 2, 3: HTTP (Se mantienen)
+async def notify_direct(notification: dict):
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        resp = await client.post(f"{CENTRAL_API_URL}/sale-notification", json=notification)
+        resp.raise_for_status()
+        logger.info("✅ Notificación enviada (HTTP 1/6: Directo)")
+
+async def notify_retry_simple(notification: dict, retries: int = 3, delay_s: float = 1.0):
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        last_exc = None
+        for attempt in range(1, retries + 1):
+            try:
+                resp = await client.post(f"{CENTRAL_API_URL}/sale-notification", json=notification)
+                if resp.status_code == 200:
+                    logger.info(f"✅ Notificación enviada (HTTP 2/6) en intento {attempt}")
+                    return
+                else:
+                    last_exc = Exception(f"Central API responded with status {resp.status_code}")
+            except Exception as e:
+                last_exc = e
+                logger.warning(f"Intento {attempt} falló: {e}")
+            await asyncio.sleep(delay_s)
+        raise last_exc or Exception("Fallo con reintentos simples")
+
+async def notify_backoff(notification: dict, max_retries: int = 5, base_delay: float = 1.0):
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        last_exc = None
+        for attempt in range(max_retries):
+            try:
+                resp = await client.post(f"{CENTRAL_API_URL}/sale-notification", json=notification)
+                if resp.status_code == 200:
+                    logger.info(f"✅ Notificación enviada (HTTP 3/6) en intento {attempt+1}")
+                    return
+                else:
+                    last_exc = Exception(f"Central API responded with status {resp.status_code}")
+            except Exception as e:
+                last_exc = e
+                logger.warning(f"Intento {attempt+1} falló: {e}")
+            sleep_for = base_delay * (2 ** attempt)
+            logger.info(f"⏳ Esperando {sleep_for}s antes del próximo intento")
+            await asyncio.sleep(sleep_for)
+        raise last_exc or Exception("Fallo con backoff exponencial")
+
+# Modo 4: Redis Queue (Bloqueante ejecutado en hilo)
+def send_notification_to_redis(sale: SaleResponse):
+    notification = {
+        "sale_id": sale.sale_id, "branch_id": BRANCH_ID, "product_id": sale.product_id, 
+        "quantity_sold": sale.quantity_sold, "money_received": sale.money_received, 
+        "total_amount": sale.total_amount, "change": sale.change, 
+        "timestamp": sale.timestamp.isoformat()
+    }
+    try:
+        r = get_redis_client()
+        r.rpush(REDIS_QUEUE, json.dumps(notification))
+        logger.info(f"✅ Notificación encolada en Redis (4/6): {REDIS_QUEUE}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Fallo al enviar a Redis: {e}. Venta {sale.sale_id} NO encolada.")
+        return False
+
+def _redis_lpop_once():
+    """Helper bloqueante: hace LPOP y devuelve el string (o None)."""
+    try:
+        r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+        raw = r.lpop(REDIS_QUEUE)
+        return raw
+    except Exception as e:
+        logger.error(f"Redis LPOP fallo: {e}")
+        return None
+
+def _redis_rpush(value: str):
+    """Helper bloqueante: rpush."""
+    try:
+        r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+        r.rpush(REDIS_QUEUE, value)
+        return True
+    except Exception as e:
+        logger.error(f"Redis RPUSH fallo: {e}")
+        return False
+
+async def redis_queue_worker(poll_interval: float = 2.0):
+    logger.info("🔁 Redis worker iniciado")
+    while True:
+        try:
+            raw = await asyncio.to_thread(_redis_lpop_once)
+            if raw:
+                try:
+                    notif = json.loads(raw)
+                except Exception:
+                    logger.error("❌ Mensaje Redis no decodable, saltando")
+                    continue
+
+                logger.info(f"🔄 Reintentando notificación desde Redis: sale_id={notif.get('sale_id')}")
+                try:
+                    await notify_backoff(notif)
+                    logger.info(f"✅ Reenvío exitoso desde Redis: {notif.get('sale_id')}")
+                except Exception as e:
+                    logger.error(f"❌ Falló reenvío desde Redis: {e}. Re-enqueueando")
+                    await asyncio.to_thread(_redis_rpush, json.dumps(notif))
+                    await asyncio.sleep(5.0)
+            else:
+                await asyncio.sleep(poll_interval)
+        except Exception as e:
+            logger.error(f"Redis worker encontró error: {e}")
+            await asyncio.sleep(5.0)
+
+# Modo 5: RabbitMQ Publisher (Directo/Punto-a-Punto)
+def publish_sale_direct(sale_data: dict, max_retries: int = 3):
+    message = {
+        **sale_data, "message_id": str(uuid.uuid4()),
+        "timestamp": datetime.now().isoformat(), "source": BRANCH_ID, "mode": "Direct"
+    }
+    
+    for attempt in range(max_retries):
+        try:
+            params = pika.ConnectionParameters(
+                host=RABBITMQ_HOST, port=RABBITMQ_PORT, 
+                credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS),
+                heartbeat=600, blocked_connection_timeout=300,
+            )
+            
+            with pika.BlockingConnection(params) as connection:
+                channel = connection.channel()
+                channel.exchange_declare(exchange=RABBITMQ_EXCHANGE_DIRECT, exchange_type='direct', durable=True)
+                channel.basic_publish(
+                    exchange=RABBITMQ_EXCHANGE_DIRECT, routing_key=RABBITMQ_QUEUE_DIRECT, 
+                    body=json.dumps(message, default=str),
+                    properties=pika.BasicProperties(delivery_mode=2), mandatory=True
+                )
+                logger.info(f"✅ Mensaje RabbitMQ Directo (5/6) publicado.")
+                return True 
+
+        except Exception as e:
+            logger.error(f"❌ Intento {attempt + 1} falló (RabbitMQ Directo): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+    logger.error(f"❌ Falló publicar a RabbitMQ Directo después de {max_retries} intentos. Venta: {sale_data.get('sale_id')}")
+    return False
+
+def send_notification_to_rabbitmq_direct(sale: SaleResponse):
+    notification_data = {
+        "sale_id": sale.sale_id, "branch_id": BRANCH_ID, "product_id": sale.product_id, 
+        "quantity_sold": sale.quantity_sold, "money_received": sale.money_received, 
+        "total_amount": sale.total_amount, "change": sale.change, 
+        "timestamp": sale.timestamp.isoformat()
+    }
+    publish_sale_direct(notification_data)
+
+# MODO 6: RabbitMQ Publisher (Pub/Sub Fanout - Ventas)
+def publish_sale_fanout(sale_data: dict, max_retries: int = 3):
+    message = {
+        **sale_data, "message_id": str(uuid.uuid4()),
+        "timestamp": datetime.now().isoformat(), "source": BRANCH_ID, "mode": "Fanout"
+    }
+
+    for attempt in range(max_retries):
+        try:
+            params = pika.ConnectionParameters(
+                host=RABBITMQ_HOST, port=RABBITMQ_PORT, 
+                credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS),
+                heartbeat=600, blocked_connection_timeout=300,
+            )
+            
+            with pika.BlockingConnection(params) as connection:
+                channel = connection.channel()
+                channel.exchange_declare(exchange=RABBITMQ_EXCHANGE_FANOUT, exchange_type='fanout', durable=True)
+                channel.basic_publish(
+                    exchange=RABBITMQ_EXCHANGE_FANOUT, routing_key='', 
+                    body=json.dumps(message, default=str),
+                    properties=pika.BasicProperties(delivery_mode=2), mandatory=True
+                )
+                logger.info(f"✅ Mensaje RabbitMQ Fanout (6/6) publicado.")
+                return True 
+
+        except Exception as e:
+            logger.error(f"❌ Intento {attempt + 1} falló (RabbitMQ Fanout): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+
+    logger.error(f"❌ Falló publicar a RabbitMQ Fanout después de {max_retries} intentos. Venta: {sale_data.get('sale_id')}")
+    return False
+
+def send_notification_to_fanout(sale: SaleResponse):
+    notification_data = {
+        "sale_id": sale.sale_id, "branch_id": BRANCH_ID, "product_id": sale.product_id, 
+        "quantity_sold": sale.quantity_sold, "money_received": sale.money_received, 
+        "total_amount": sale.total_amount, "change": sale.change, 
+        "timestamp": sale.timestamp.isoformat()
+    }
+    publish_sale_fanout(notification_data)
+
+# =================================================================
+# === NUEVA FUNCIÓN: PUBLICACIÓN DE EVENTO USUARIOCREADO (Taller 4) ===
+# =================================================================
+
+def publish_user_created(user_data: dict):
+    """Publica el evento UsuarioCreado a un Fanout Exchange dedicado."""
+    message = {
+        "id": str(uuid.uuid4()), # ID de usuario simulado
+        "nombre": user_data['nombre'],
+        "email": user_data['email'],
+        "timestamp": datetime.now().isoformat(),
+        "event_type": "UsuarioCreado",
+        "source": BRANCH_ID
+    }
+
+    try:
+        credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
+        params = pika.ConnectionParameters(
+            host=RABBITMQ_HOST, port=RABBITMQ_PORT, 
+            credentials=credentials, heartbeat=600
+        )
+        
+        with pika.BlockingConnection(params) as connection:
+            channel = connection.channel()
+            # Declarar el Exchange Fanout para USUARIOS
+            channel.exchange_declare(
+                exchange=EXCHANGE_USER_EVENTS, 
+                exchange_type='fanout', 
+                durable=True
+            )
+            
+            channel.basic_publish(
+                exchange=EXCHANGE_USER_EVENTS, 
+                routing_key='', 
+                body=json.dumps(message, default=str),
+                properties=pika.BasicProperties(delivery_mode=2)
+            )
+            
+            logger.info(f"✅ EVENTO PUBLICADO: UsuarioCreado para {user_data['email']} en exchange {EXCHANGE_USER_EVENTS}")
+            return True 
+
+    except Exception as e:
+        logger.error(f"❌ Falló la publicación de UsuarioCreado: {e}")
+        return False
+
+
+# === Función principal de envío (ACTUALIZADA) ===
+async def send_sale_notification(sale: SaleResponse):
+    """
+    Esta función decide la estrategia según NOTIF_MODE (para ventas).
+    """
+    if NOTIF_MODE in [1, 2, 3]:
+        # Modos HTTP: usamos Circuit Breaker
+        try:
+            await circuit_breaker.call(dispatch_notify_http, sale)
+        except Exception as e:
+            logger.error(f"⚠️ Notificación HTTP fallida (CircuitBreaker): {e}")
+    elif NOTIF_MODE == 4:
+        # Redis: encolamos usando thread (no bloqueamos loop)
+        await asyncio.to_thread(send_notification_to_redis, sale)
+    elif NOTIF_MODE == 5:
+        # RabbitMQ Directo (Punto-a-Punto)
+        await asyncio.to_thread(send_notification_to_rabbitmq_direct, sale)
+    elif NOTIF_MODE == 6:
+        # RabbitMQ Fanout (Pub/Sub) - ¡NUEVO!
+        await asyncio.to_thread(send_notification_to_fanout, sale)
+    else:
+        logger.error(f"⚠️ Modo de notificación {NOTIF_MODE} inválido.")
+
+# =================================================================
+# === RUTAS API (INTERFAZ MANTENIDA) ==============================
+# =================================================================
+
+# ===== VENTAS API (La interfaz de ruta y su cuerpo se mantiene) =====
+@app.post("/sales", response_model=SaleResponse, tags=["Ventas"])
+async def process_sale(sale_request: SaleRequest):
+    if sale_request.product_id not in local_inventory:
+        raise HTTPException(status_code=404, detail="Producto no disponible")
+    product = local_inventory[sale_request.product_id]
+    if product.stock < sale_request.quantity:
+        raise HTTPException(status_code=400, detail=f"Stock insuficiente. Disponible: {product.stock}")
+    
+    product.stock -= sale_request.quantity
+    sale_timestamp = datetime.now()
+    total_amount = product.price * sale_request.quantity
+    change = sale_request.money_received - total_amount
+
+    sale_response = SaleResponse(
+        sale_id=f"{BRANCH_ID}_{sale_timestamp.isoformat()}",
+        product_id=product.id,
+        product_name=product.name,
+        quantity_sold=sale_request.quantity,
+        total_amount=total_amount,
+        money_received=sale_request.money_received,
+        change=change,
+        timestamp=sale_timestamp,
+        status="completed"
+    )
+    sales_history.append(sale_response)
+
+    # Ejecutar envío como tarea asíncrona (no blocking)
+    asyncio.create_task(send_sale_notification(sale_response))
+
+    return sale_response
+
+
+# ===== NUEVA RUTA DE REGISTRO DE USUARIO (Taller 4) =====
+@app.post("/users/register", tags=["Usuarios (Taller 4)"])
+async def register_user_and_publish(
+    # CRÍTICO: Recibe los campos del formulario con Form(...)
+    nombre: str = Form(...),
+    email: str = Form(...)
+):
+    """Endpoint para registrar un usuario y publicar el evento UsuarioCreado."""
+    
+    # Crea el objeto UserCreate internamente
+    user = UserCreate(nombre=nombre, email=email)
+    
+    # 1. Simular registro en DB
+    user_db[user.email] = user
+    logger.info(f"👤 Usuario registrado localmente: {user.email}")
+    
+    # 2. Publicar el evento de usuario en background
+    # Usamos asyncio.to_thread para correr la función bloqueante de RabbitMQ
+    await asyncio.to_thread(publish_user_created, user.model_dump())
+    
+    # Retorna una respuesta HTML de éxito
+    return HTMLResponse(content=f"""
+        <h3>✅ Usuario registrado!</h3>
+        <p><b>{user.nombre} ({user.email})</b>. Evento UsuarioCreado publicado.</p>
+        <a href="/dashboard">Volver al Dashboard</a>
+    """)
+
+@app.get("/register-user", response_class=HTMLResponse, tags=["Usuarios (Taller 4)"])
+async def register_user_form():
+    """Formulario para la interfaz del usuario."""
+    return f"""
+<html>
+<head>
+    <title>Registro de Usuario</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>body {{ padding: 20px; }}</style>
+</head>
+<body>
+    <div class="container">
+        <h1>Registro de Nuevo Usuario</h1>
+        <p>Simula la creación de un usuario. Esto publica un evento Pub/Sub independiente de las ventas.</p>
+        <form action="/users/register" method="post">
+            <div class="mb-3">
+                <label for="nombre" class="form-label">Nombre:</label>
+                <input type="text" id="nombre" name="nombre" class="form-control" required>
+            </div>
+            <div class="mb-3">
+                <label for="email" class="form-label">Email:</label>
+                <input type="email" id="email" name="email" class="form-control" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Registrar y Publicar Evento</button>
+        </form>
+        <hr>
+        <a href="/dashboard" class="btn btn-secondary">Volver al Dashboard</a>
+    </div>
+</body>
+</html>
+"""
+
+# ===== DASHBOARD (ESTABLE Y COMPLETO - Se mantiene) =====
+@app.get("/dashboard", response_class=HTMLResponse, tags=["Dashboard"])
+async def dashboard():
+    # Cálculo de métricas
+    total_sales_count = len(sales_history)
+    total_products_count = sum(p.stock for p in local_inventory.values())
+    total_revenue = sum(s.total_amount for s in sales_history)
+    
+    # Opciones del selector de producto para el modal
+    options_html = "".join([f"<option value='{p.id}'>{p.name}</option>" for p in local_inventory.values()])
+
+    # Tabla de inventario
+    inventory_html = "".join([
+        f"<tr><td>{p.id}</td><td>{p.name}</td><td>${p.price:.2f}</td><td>{p.stock}</td></tr>"
+        for p in local_inventory.values()
+    ])
+
+    # Historial de ventas (Lógica Corregida y Optimizada)
+    sales_html = "".join([
+        (
+            lambda s_id: 
+            f"""
+<tr>
+    <td>{s.timestamp.strftime('%Y-%m-%d %H:%M:%S')}</td>
+    <td>{s_id.split('_')[0] if '_' in s_id else s_id}</td>
+    <td>{s.product_name}</td>
+    <td>{s.quantity_sold}</td>
+    <td>${s.total_amount:.2f}</td>
+    <td>${s.money_received:.2f}</td>
+    <td>${s.change:.2f}</td>
+    <td class='text-muted small'>{s_id.split('_')[-1].split('.')[0]}</td>
+</tr>
+"""
+        )(str(s.sale_id)) 
+        
+        for s in sales_history
+    ])
+
+    # Estado del Circuit Breaker
+    cb_state = f"{circuit_breaker.state.value.upper()} (Fallos: {circuit_breaker.failure_count})" if NOTIF_MODE in [1,2,3] else "N/A"
+
+    # --- INICIO DEL CÓDIGO HTML (Estructura de Layout Corregida) ---
+    return f"""
+<html>
+<head>
+<meta charset="utf-8">
+<title>🟢EcoMarket Sucursal - {BRANCH_ID}</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+/* ... (Se mantiene el CSS) ... */
+body {{
+    background-color: #FAFAFA;
+    font-family: 'Segoe UI', sans-serif;
+}}
+.navbar {{
+    background-color: #3BAF5D;
+    color: white;
+    padding: 0.8rem 1.5rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}}
+.navbar-brand {{
+    font-weight: 600;
+    color: white !important;
+}}
+.metric-item {{
+    text-align: center;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.85rem;
+    color: #fff;
+    margin-right: 0.4rem;
+    min-width: 90px;
+    box-shadow: inset 0 0 6px rgba(255, 255, 255, 0.2);
+}}
+.metric-item h6 {{
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 500;
+    opacity: 0.9;
+}}
+.metric-item p {{
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: rgba(255,255,255,0.9);
+    text-shadow: 0 0 6px rgba(255,255,255,0.3);
+}}
+
+.mode-container {{
+    display: flex;
+    align-items: center;
+    background: rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 4px 8px;
+    margin-left: 1rem;
+}}
+.mode-label {{
+    color: #fff;
+    font-size: 0.8rem;
+    margin-right: 4px;
+}}
+.mode-select {{
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #fff;
+    border-radius: 6px;
+    padding: 2px 6px;
+    font-size: 0.8rem;
+    height: 28px;
+}}
+.btn-main, .btn-sale {{
+    border: 1px solid rgba(255,255,255,0.35);
+    border-radius: 8px;
+    font-weight: 600;
+    padding: 6px 14px;
+    color: #fff;
+    transition: all 0.25s ease;
+    font-size: 0.9rem;
+}}
+.btn-main {{ background-color: #2E8C4A; }}
+.btn-sale {{ background-color: #1f6c36; }}
+.btn-main:hover, .btn-sale:hover {{
+    box-shadow: 0 0 14px rgba(255,255,255,0.6);
+    transform: scale(1.03);
+}}
+#toast {{
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #3BAF5D;
+    color: #fff;
+    padding: 10px 20px;
+    border-radius: 8px;
+    display: none;
+    z-index: 9999;
+    font-weight: 500;
+}}
+.card {{
+    border: none;
+    border-radius: 10px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+}}
+.card-header {{
+    background-color: #3BAF5D;
+    color: white;
+    font-weight: 600;
+}}
+.table thead th {{
+    background-color: #2E8C4A;
+    color: white;
+    border: none;
+    font-weight: 500;
+}}
+.table tbody tr:hover {{ background-color: #F0FFF3; }}
+.footer {{
+    text-align: center;
+    margin-top: 2rem;
+    color: #888;
+    font-size: 0.85rem;
+}}
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark">
+    <a class="navbar-brand" href="#">EcoMarket Sucursal: {BRANCH_ID}</a>
+        <div class="ms-auto d-flex align-items-center">
+        <div class="metrics-expanded d-flex">
+            <div class="metric-item"><h6>Stock Total</h6><p>{total_products_count}</p></div>
+            <div class="metric-item"><h6>Ventas</h6><p>{total_sales_count}</p></div>
+            <div class="metric-item"><h6>Recaudación</h6><p>${total_revenue:.2f}</p></div>
+            <div class="metric-item"><h6>Breaker</h6><p>{cb_state}</p></div>
+        </div>
+    <div class="mode-container">
+        <span class="mode-label">Modo Central:</span>
+        <form action="/set-mode" method="post" class="m-0">
+            <select name="mode" class="mode-select" onchange="this.form.submit()">
+            <option value="1" {"selected" if NOTIF_MODE==1 else ""}>1. HTTP Directo</option>
+            <option value="2" {"selected" if NOTIF_MODE==2 else ""}>2. HTTP Reintentos</option>
+            <option value="3" {"selected" if NOTIF_MODE==3 else ""}>3. HTTP Backoff</option>
+            <option value="4" {"selected" if NOTIF_MODE==4 else ""}>4. Redis Queue</option>
+            <option value="5" {"selected" if NOTIF_MODE==5 else ""}>5. RabbitMQ Directo (P2P)</option>
+            <option value="6" {"selected" if NOTIF_MODE==6 else ""}>6. RabbitMQ Fanout (Pub/Sub)</option>
+        </select>
+        </form>
+    </div>
+    
+    <a href="/register-user" class="btn btn-main ms-2">Registrar Usuario</a> 
+    <button class="btn btn-main ms-2" data-bs-toggle="modal" data-bs-target="#saleModal">Registrar Venta</button>
+    <button class="btn btn-sale ms-2" onclick="window.location.reload()">Actualizar</button>
+    </div>
+</nav>
+
+<div class="container mt-4">
+    <div class="row g-4">
+        <div class="col-md-5">
+            <div class="card">
+                <div class="card-header">Inventario Local</div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height:400px;">
+                        <table class="table table-hover table-sm mb-0 align-middle">
+                        <thead><tr><th>ID</th><th>Producto</th><th>Precio</th><th>Stock</th></tr></thead>
+                            <tbody>{inventory_html}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-7">
+            <div class="card">
+                <div class="card-header">Historial de Ventas</div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height:400px;">
+                    <table class="table table-striped table-sm mb-0 align-middle">
+                        <thead>
+                            <tr><th>Fecha</th><th>Sucursal</th><th>Producto</th><th>Cant.</th><th>Total</th><th>Recibido</th><th>Cambio</th><th>ID Venta</th></tr>
+                        </thead>
+                    <tbody id="sales-body">{sales_html}</tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    </div>
+</div>
+
+    <div class="footer">© 2025 EcoMarket Sucursal — {BRANCH_ID}</div>
+</div>
+
+<div class="modal fade" id="saleModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h6 class="modal-title">Registrar Venta</h6>
+            </div>    
+                <form id="saleForm">
+                    <div class="modal-body">
+                        <div class="mb-2">
+                            <label>Producto</label>
+                            <select class="form-select" name="product_id" required>{options_html}</select>
+                        </div>
+                        <div class="mb-2">
+                    <label>Cantidad</label>
+                    <input type="number" class="form-control" name="quantity" value="1" min="1" required>
+                </div>
+            <div class="mb-2">  
+        <label>Dinero Recibido</label>
+        <input type="number" step="0.01" class="form-control" name="money_received" required>
+    </div>
+    </div>
+    <div class="modal-footer">
+        <button type="submit" class="btn btn-success w-100">Confirmar Venta</button>
+    </div>
+    </form>
+    </div>
+    </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+const toast = document.getElementById('toast');
+document.getElementById('saleForm').addEventListener('submit', async (e) => {{
+    e.preventDefault();
+    const form = e.target;
+    const data = new FormData(form);
+  
+    try {{
+        const res = await fetch('/submit-sale', {{
+            method: 'POST',
+            body: data
+        }});
+    if (res.ok) {{
+        showToast('✅ Venta registrada correctamente');
+        const modal = bootstrap.Modal.getInstance(document.getElementById('saleModal'));
+        modal.hide();
+        setTimeout(() => window.location.reload(), 1200);
+    }} else {{
+        const text = await res.text();
+        // Intenta extraer el error de la respuesta HTML si falla la venta
+        const errorMatch = text.match(/<h3>❌\s*(.*?)<\/h3>/);
+        const errorMessage = errorMatch ? errorMatch[1].trim() : 'Error desconocido';
+        showToast(`❌ Error al registrar venta: ${{errorMessage}}`, true);
+    }}
+    }} catch (error) {{
+    showToast('❌ Error de conexión al servidor.', true);
+    }}
+    }});
+
+function showToast(msg, error=false) {{
+    toast.textContent = msg;
+    toast.style.background = error ? '#e74c3c' : '#3BAF5D';
+    toast.style.display = 'block';
+    setTimeout(() => toast.style.display = 'none', 3000);
+}}
+</script>
+</body>
+</html>
+"""
+
+# ===== CAMBIO DE MODO (Actualizado para incluir el modo 6) =====
+@app.post("/set-mode", response_class=HTMLResponse, tags=["Dashboard"])
+async def set_mode(mode: int = Form(...)):
+    global NOTIF_MODE
+    if mode not in [1, 2, 3, 4, 5, 6]:
+        return HTMLResponse(f"<p>Modo {mode} no válido.</p><a href='/dashboard'>Volver</a>")
+    NOTIF_MODE = mode
+    logger.info(f"🔧 Modo cambiado a {NOTIF_MODE}")
+    return HTMLResponse(f"<p>Modo cambiado a {NOTIF_MODE}</p><a href='/dashboard'>Volver</a>")
+
+
+# ===== FORMULARIO DE VENTAS (se mantiene) =====
+@app.post("/submit-sale", response_class=HTMLResponse, tags=["Dashboard"])
+async def submit_sale_form(
+    product_id: int = Form(...),
+    quantity: int = Form(...),
+    money_received: float = Form(...)
+):
+    if product_id not in local_inventory:
+        return HTMLResponse(content="<h3>❌ Producto no encontrado.</h3><a href='/dashboard'>Volver</a>")
+
+    product = local_inventory[product_id]
+    if product.stock < quantity:
+        return HTTPException(status_code=400, detail=f"Stock insuficiente. Disponible: {product.stock}")
+    
+    product.stock -= quantity
+    sale_timestamp = datetime.now()
+    total_amount = product.price * quantity
+    change = money_received - total_amount
+
+    sale = SaleResponse(
+        sale_id=f"{BRANCH_ID}_{sale_timestamp.isoformat()}",
+        product_id=product.id,
+        product_name=product.name,
+        quantity_sold=quantity,
+        total_amount=total_amount,
+        money_received=money_received,
+        change=change,
+        timestamp=sale_timestamp,
+        status="completed"
+    )
+    sales_history.append(sale)
+
+    # Ejecutar la notificación en background (usa send_sale_notification)
+    asyncio.create_task(send_sale_notification(sale))
+
+    return HTMLResponse(content=f"""
+        <h3>✅ Venta registrada correctamente!</h3>
+        <p>{quantity}x {product.name} vendidos por ${total_amount}</p>
+        <p><b>Dinero recibido:</b> ${money_received}</p>
+        <p><b>Cambio:</b> ${change}</p>
+        <p><b>Modo de Notificación:</b> {NOTIF_MODE}</p>
+        <a href="/dashboard">Volver al Dashboard</a>
+    """)
+
+
+# ===== RUTAS RESTANTES (se mantienen) =====
+@app.get("/inventory", response_model=List[Product], tags=["Inventario"])
+async def get_local_inventory():
+    return list(local_inventory.values())
+
+@app.get("/inventory/{product_id}", response_model=Product, tags=["Inventario"])
+async def get_product(product_id: int):
+    if product_id not in local_inventory:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    return local_inventory[product_id]
+# =======================================================
+# === SINCRONIZACIÓN DESDE CENTRAL (Altas y Actualizaciones)
+# =======================================================
+
+@app.post("/inventory", tags=["Inventario"])
+async def add_product_from_central(product: Product):
+    """
+    Permite que la Central agregue o actualice un producto en la sucursal.
+    """
+    if product.id in local_inventory:
+        local_inventory[product.id] = product
+        logger.info(f"🔄 Producto actualizado desde Central: {product.name}")
+        return {"status": "updated", "product": product}
+    else:
+        local_inventory[product.id] = product
+        logger.info(f"🆕 Producto agregado desde Central: {product.name}")
+        return {"status": "added", "product": product}
+
+
+@app.put("/inventory/{product_id}", tags=["Inventario"])
+async def update_product_from_central(product_id: int, product: Product):
+    if product_id not in local_inventory:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    local_inventory[product_id] = product
+    logger.info(f"♻️ Producto actualizado por Central: {product.name}")
+    return {"status": "updated", "product": product}
+
+
+@app.delete("/inventory/{product_id}", tags=["Inventario"])
+async def delete_product_from_central(product_id: int):
+    if product_id not in local_inventory:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    removed = local_inventory.pop(product_id)
+    logger.info(f"🗑️ Producto eliminado por Central: {removed.name}")
+    return {"status": "deleted", "product": removed.name}
+
+@app.get("/sales/stats", tags=["Ventas"])
+async def sales_stats():
+    if not sales_history:
+        return {"total_sales": 0, "total_revenue": 0}
+    total_revenue = sum(s.total_amount for s in sales_history)
+    return {
+        "total_sales": len(sales_history),
+        "total_revenue": round(total_revenue, 2),
+        "average_sale": round(total_revenue / len(sales_history), 2)
+    }
+
+@app.get("/submit-sale-form", response_class=HTMLResponse)
+async def submit_sale_page():
+    options_html = "".join([f"<option value='{p.id}'>{p.name}</option>" for p in local_inventory.values()])
+    return f"""
+    <h1>Registrar Nueva Venta</h1>
+    <form action="/submit-sale" method="post">
+        <label>Producto:</label><br>
+        <select name="product_id">{options_html}</select><br>
+        <label>Cantidad:</label><br><input type="number" name="quantity" value="1" min="1" required><br>
+        <label>Dinero Recibido:</label><br><input type="number" step="0.01" name="money_received" value="0.0" required><br><br>
+        <button type="submit">Enviar Venta</button>
+    </form>
+    <a href="/dashboard">Volver</a>
+    """
+
+@app.get("/", tags=["General"])
+async def root():
+    return {
+        "service": "🌿 EcoMarket Sucursal API",
+        "branch_id": BRANCH_ID,
+        "status": "operational",
+        "total_products": len(local_inventory),
+        "total_sales": len(sales_history),
+        "current_notification_mode": NOTIF_MODE,
+        "circuit_breaker_state": circuit_breaker.state.value if NOTIF_MODE in [1,2,3] else 'N/A',
+        "circuit_failures": circuit_breaker.failure_count if NOTIF_MODE in [1,2,3] else 'N/A'
+    }
+
+# ===== STARTUP: lanzar worker de Redis para procesar cola (si Redis disponible) =====
+@app.on_event("startup")
+async def startup_event():
+    # se lanza siempre para estar disponible si el modo cambia a 4
+    asyncio.create_task(redis_queue_worker())
+    logger.info("Startup completo - Redis worker lanzado (si Redis está accesible).")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8002)
+```
+
+VIDEO DE UN MINUTO DE EXPLICACIÓN SOBRE PUB/SUB: https://drive.google.com/file/d/12OLajGMGWTuj1jZLAJqkLWHtUcA8lLIi/view?usp=sharing
