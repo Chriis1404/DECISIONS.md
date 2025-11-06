@@ -198,19 +198,4 @@ El dashboard siguió operativo gracias a que **Nginx redirigió el 100% de las p
 
 ---
 
-## 📋 **Entrega y Evaluación (Avance Hito 2 - 10%)**
-
-- **Repositorio:** Código con Docker Compose para Nginx + instancias (GitHub o similar).  
-- **Diagrama:** Flujo de tráfico (como el mostrado arriba).  
-- **Informe breve (1-2 páginas):**
-  - Justificación de escalabilidad: Ventajas (throughput, resiliencia) vs retos (sesiones sticky si needed).  
-  - Distribución lograda: Requests alternados en logs de instancias.  
-  - Mejoras futuras: Auto-scaling, métricas (Prometheus).  
-
-💡 **Tip para entrega:**  
-Incluye este `README.md` con los comandos (`docker-compose up`) y un video corto (1 min) E2E:  
-👉 Flood de requests → Ver distribución en logs.
-
----
-
 🎯 **Fin del Documento - EcoMarket Hito 2**
