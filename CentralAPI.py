@@ -1,4 +1,4 @@
-´´from fastapi import FastAPI, HTTPException, Form
+from fastapi import FastAPI, HTTPException, Form
 from fastapi.responses import HTMLResponse, JSONResponse 
 from pydantic import BaseModel, field_validator
 from typing import Dict, List, Union, Optional
@@ -1318,4 +1318,4 @@ if __name__ == "__main__":
     QUEUE_USER_NOTIFS = os.getenv("RABBITMQ_QUEUE_NOTIFS", "user_notifs_central")
     QUEUE_USER_STATS = os.getenv("RABBITMQ_QUEUE_STATS", "user_stats_central")
     
-    uvicorn.run(app, host="0.0.0.0", port=8000)´´
+    uvicorn.run(app, host="0.0.0.0", port=8000)
