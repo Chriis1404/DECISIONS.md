@@ -1,0 +1,160 @@
+version: "3.9"
+
+services:
+# ========================
+# NGINX LOAD BALANCER
+# ========================
+  nginx-lb:
+    image: nginx:stable-alpine
+    container_name: nginx-lb
+    ports:
+      - "80:80" 
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro 
+    depends_on:
+      # [CORRECCIÓN] Usa el formato de objeto
+      central1:
+        condition: service_started
+      central2:
+        condition: service_started
+    networks:
+      - ecomarket_net
+
+# ========================
+# CENTRAL INSTANCIA 1
+# ========================
+  central1:
+    build:
+      context: .
+      dockerfile: ./Ecomarket/Central/Dockerfile
+    container_name: central-api-1
+    expose: 
+      - "8000" 
+    volumes:
+      - ./Ecomarket:/app/Ecomarket
+    working_dir: /app 
+    environment:
+      - PYTHONPATH=/app
+      - BRANCHES=http://sucursal-demo:8002 
+      - RABBITMQ_HOST=rabbitmq
+      - SERVER_NAME=CENTRAL_1
+    command: uvicorn Ecomarket.Central.CentralAPI:app --host 0.0.0.0 --port 8000
+    # [CORRECCIÓN] Espera a que los servicios estén SALUDABLES
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ecomarket_net
+      
+# ========================
+# CENTRAL INSTANCIA 2
+# ========================
+  central2:
+    build:
+      context: .
+      dockerfile: ./Ecomarket/Central/Dockerfile
+    container_name: central-api-2
+    expose: 
+      - "8000" 
+    volumes:
+      - ./Ecomarket:/app/Ecomarket
+    working_dir: /app 
+    environment:
+      - PYTHONPATH=/app
+      - BRANCHES=http://sucursal-demo:8002 
+      - RABBITMQ_HOST=rabbitmq
+      - SERVER_NAME=CENTRAL_2
+    command: uvicorn Ecomarket.Central.CentralAPI:app --host 0.0.0.0 --port 8000
+    # [CORRECCIÓN] Espera a que los servicios estén SALUDABLES
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ecomarket_net
+
+# ========================
+# SUCURSAL DEMO
+# ========================
+  sucursal-demo:
+    build:
+      context: .
+      dockerfile: ./Ecomarket/Sucursal/Dockerfile
+    container_name: sucursal-demo
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./Ecomarket:/app/Ecomarket
+    working_dir: /app 
+    environment:
+      - PYTHONPATH=/app
+      - REDIS_HOST=redis
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_USER=ecomarket_user
+      - RABBITMQ_PASS=ecomarket_password
+      - CENTRAL_API_URL=http://nginx-lb:80 
+    command: uvicorn Ecomarket.Sucursal.SucursalAPIdemo:app --host 0.0.0.0 --port 8002 
+    # [CORRECCIÓN] Espera a que los servicios estén SALUDABLES
+    depends_on:
+      nginx-lb:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ecomarket_net
+
+# ========================
+# REDIS
+# ========================
+  redis:
+    image: redis:6.2-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis_data:/data
+    # [CORRECCIÓN] Healthcheck con start_period
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - ecomarket_net
+
+# ========================
+# RABBITMQ
+# ========================
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672" 
+      - "15672:15672" 
+    environment:
+      RABBITMQ_DEFAULT_USER: ecomarket_user
+      RABBITMQ_DEFAULT_PASS: ecomarket_password
+    volumes:
+      - ./rabbitmq_data:/var/lib/rabbitmq
+    # [CORRECCIÓN] Añadido healthcheck para RabbitMQ
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ecomarket_net
+
+# ========================
+# RED DE SERVICIOS
+# ========================
+networks:
+  ecomarket_net:
+    driver: bridge
