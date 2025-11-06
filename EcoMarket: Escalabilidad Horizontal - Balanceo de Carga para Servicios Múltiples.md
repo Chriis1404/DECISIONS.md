@@ -113,9 +113,13 @@ Usa `docker-compose stop/start central1` para simular fallos sin eliminar el con
 El código fuente completo se encuentra disponible en el siguiente enlace:
 
 ➡️ **[Ver Repositorio del Proyecto en GitHub "CENTRAL.API"](https://github.com/Chriis1404/DECISIONS.md/blob/main/CentralAPI.py)** 
+
 ➡️ **[Ver Repositorio del Proyecto en GitHub "SUCURSAL.API"](https://github.com/Chriis1404/DECISIONS.md/blob/main/SucursalAPIdemo.py)**
+
 ➡️ **[Ver Repositorio del Proyecto en GitHub "DOCKER-COMPOSE.YML"](https://github.com/Chriis1404/DECISIONS.md/blob/main/docker-compose.yml)**
+
 ➡️ **[Ver Repositorio del Proyecto en GitHub "NGINX.CONF"](https://github.com/Chriis1404/DECISIONS.md/blob/main/nginx.conf)**
+
 ➡️ **[Ver Repositorio del Proyecto en GitHub "DOCKERFILE"](https://github.com/Chriis1404/DECISIONS.md/blob/main/Dockerfile)**
 
 ---
