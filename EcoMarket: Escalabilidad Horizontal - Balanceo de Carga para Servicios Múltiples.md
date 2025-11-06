@@ -1,63 +1,216 @@
----
+# 🌎 **EcoMarket - Hito 2**
+### 🧩 *Alta Disponibilidad, Escalabilidad y Balanceo de Carga*
 
-## 2. Archivo: `INFORME_HITO_2.md`
-
-Copia todo el contenido dentro de este bloque y pégalo en un archivo nuevo llamado `INFORME_HITO_2.md` en la misma carpeta.
-
-```markdown
-# 📄 Informe Técnico: Hito 2 - Escalabilidad y Resiliencia en EcoMarket
-
-**Autor:** [Tu Nombre]
-**Fecha:** 5 de noviembre de 2025
+📅 **Fecha:** 5 de noviembre de 2025  
+👤 **Autor:** [Tu Nombre]  
+📂 **Proyecto:** EcoMarket - API Central y Sucursal  
 
 ---
 
-## 1. Justificación de Escalabilidad (Horizontal vs. Vertical)
+## 🚀 **Descripción del Proyecto**
 
-Para la evolución de la API Central de EcoMarket, se optó por una estrategia de **escalabilidad horizontal** (escalar "hacia afuera") en lugar de una vertical (escalar "hacia arriba").
+Este proyecto implementa una **arquitectura de microservicios resiliente y escalable** para la **API Central de EcoMarket**, utilizando **Nginx** como balanceador de carga y **Docker Compose** para la orquestación.
 
-* **Escalabilidad Vertical** implica aumentar los recursos de una sola máquina (más CPU, más RAM). Aunque es simple de implementar inicialmente, tiene un límite físico, es costoso y presenta un **punto único de fallo** (SPOF). Si esa única máquina falla, todo el servicio de la central se cae.
+El sistema está diseñado para:
+- Manejar múltiples instancias simultáneamente.  
+- Distribuir tráfico de forma equitativa (*Round Robin*).  
+- Mantener alta disponibilidad ante fallos de contenedores.  
+- Compartir estado entre servicios mediante **Redis** y **RabbitMQ**.
 
-* **Escalabilidad Horizontal**, la estrategia implementada, implica añadir más instancias del servicio (más contenedores) y distribuir la carga entre ellas.
+---
 
-### Ventajas de la Escalabilidad Horizontal (Lo que logramos):
+## 🧭 **Diagrama de Arquitectura y Flujo de Tráfico**
 
-1.  **Alta Disponibilidad (Resiliencia):** Esta es la ventaja principal. Al tener dos instancias (`central-api-1` y `central-api-2`), si una de ellas falla o se detiene para mantenimiento, el balanceador de carga Nginx la detecta y redirige automáticamente todo el tráfico a la instancia saludable. **El servicio nunca se interrumpe para el usuario**, como se demuestra en el video de prueba.
+```mermaid
+graph TD
+    Cliente["Cliente (Sucursal API / Navegador)"]
+    Nginx("nginx-lb<br/>Balanceador de Carga")
 
-2.  **Mayor Throughput (Rendimiento):** Podemos manejar un mayor número de peticiones simultáneas. Si una sola instancia podía manejar 100 peticiones/segundo, dos instancias pueden manejar (teóricamente) 200 peticiones/segundo. La carga se reparte, evitando que una sola instancia se sature.
+    subgraph Cluster_de_la_API_Central
+        direction TB
+        Api1("central-api-1<br/>Instancia 1")
+        Api2("central-api-2<br/>Instancia 2")
+        Redis[(Redis<br/>Base de Datos Compartida)]
+        RabbitMQ((RabbitMQ<br/>Cola de Mensajes))
+        Api1 <--> Redis
+        Api2 <--> Redis
+        Api1 <--> RabbitMQ
+        Api2 <--> RabbitMQ
+    end
 
-3.  **Costo-Efectividad y Flexibilidad:** Es generalmente más barato añadir múltiples "máquinas" pequeñas que mantener una sola máquina "gigante". Podemos escalar de 2 a 5 instancias durante picos de demanda (como el Black Friday) y volver a 2 en horas valle.
+    Cliente -- Petición HTTP --> Nginx
+    Nginx -- Round Robin --> Api1
+    Nginx -- Round Robin --> Api2
+```
 
-### Retos Abordados:
+---
 
-El principal reto de la escalabilidad horizontal es la **gestión del estado**. Si cada API tuviera su propia base de datos, el sistema sería inconsistente.
+## 🛠️ **Comandos de Ejecución**
 
-Lo solucionamos de la siguiente manera:
-* **Estado de Base de Datos (Inventario, Ventas, Usuarios):** Se centralizó en **Redis**. Ambas instancias de la API se conectan a la *misma* base de datos de Redis, asegurando que ambas vean el mismo stock y la misma lista de usuarios.
-* **Estado de Tareas (Notificaciones):** Se desacopló usando **RabbitMQ**. Cuando una sucursal envía una venta (Modo 6 - Fanout), RabbitMQ la entrega a *ambas* instancias. Para evitar que ambas procesen la misma venta (duplicando el descuento de stock o el contador de usuarios), se implementó **idempotencia** usando un "lock" en Redis (`sale_lock:` y `user_event_lock:`), asegurando que solo la primera instancia en recibir el mensaje lo procese.
+A continuación, los comandos más importantes para ejecutar, monitorear y administrar los contenedores del proyecto:
 
-## 2. Distribución Lograda (Resultados)
+```bash
+# 1️⃣ Moverse a la carpeta del proyecto
+cd C:\Users\user\Documents\Eligardo
 
-Se implementó un balanceador de carga Nginx que actúa como proxy reverso para las dos instancias de la API Central.
+# 2️⃣ Construir imágenes (si hiciste cambios en el código)
+docker-compose build --no-cache
 
-* **Algoritmo Utilizado:** `Round Robin` (el algoritmo por defecto de Nginx). Este método distribuye cada nueva petición a la siguiente instancia en la lista, en un ciclo.
-* **Evidencia (Logs):** Al refrescar el dashboard de la central (`http://localhost/dashboard`) repetidamente, los logs de Docker muestran claramente la alternancia:
+# 3️⃣ Levantar los contenedores en segundo plano
+docker-compose up -d
 
-    ```bash
-    central-api-1 | INFO:  172.18.0.7:55930 - "GET /dashboard HTTP/1.0" 200 OK
-    central-api-2 | INFO:  172.18.0.7:49522 - "GET /dashboard HTTP/1.0" 200 OK
-    central-api-1 | INFO:  172.18.0.7:55946 - "GET /dashboard HTTP/1.0" 200 OK
-    central-api-2 | INFO:  172.18.0.7:49536 - "GET /dashboard HTTP/1.0" 200 OK
-    ```
+# 4️⃣ Verificar que todo esté corriendo
+docker ps
 
-* **Prueba de Fallo:** Al ejecutar `docker stop central-api-1`, se observó que el dashboard seguía funcionando sin errores. Los logs mostraron que el 100% de las peticiones se redirigían instantáneamente a `central-api-2`, validando la configuración de alta disponibilidad.
+# 5️⃣ Ver logs en vivo de cada servicio
+docker logs -f central-api-1
+docker logs -f central-api-2
+docker logs -f sucursal-demo
 
-## 3. Mejoras Futuras
+# 6️⃣ Simular fallo (detener una instancia)
+docker-compose stop central1
 
-Aunque el sistema actual es robusto, se pueden implementar las siguientes mejoras:
+# 7️⃣ Simular recuperación (reanudar instancia)
+docker-compose start central1
 
-1.  **Auto-scaling:** Utilizar un orquestador más avanzado como **Kubernetes** o **Docker Swarm** para monitorear la carga (CPU/RAM) de las instancias y automáticamente "escalar" (añadir más contenedores) durante picos de demanda y "desescalar" (eliminarlos) cuando la demanda baje.
+# 8️⃣ Reiniciar la base de datos Redis
+docker-compose exec redis redis-cli FLUSHDB
 
-2.  **Métricas y Monitoreo:** Implementar **Prometheus** y **Grafana**. Prometheus recolectaría métricas detalladas (número de peticiones/seg, tasa de errores 5xx, latencia, longitud de la cola en RabbitMQ) y Grafana las mostraría en dashboards visuales para monitorear la salud del sistema en tiempo real.
+# 9️⃣ Detener y eliminar todos los contenedores
+docker-compose down
+```
 
-3.  **Algoritmo de Balanceo Avanzado:** En producción, cambiar de `Round Robin` a `least_conn` (Menos Conexiones). Este algoritmo envía la nueva petición a la instancia que tenga el menor número de conexiones activas, siendo más eficiente si algunas peticiones son más "pesadas" (tardan más) que otras.
+💡 **Consejo:**  
+Usa `docker-compose stop/start central1` para simular fallos sin eliminar el contenedor.
+
+---
+
+## 🌐 **Servicios Disponibles**
+
+| Servicio | URL | Descripción |
+|-----------|-----|-------------|
+| 🧩 **API Central (Dashboard)** | [http://localhost/dashboard](http://localhost/dashboard) | Interfaz principal (a través de Nginx) |
+| 🏪 **API Sucursal (Dashboard)** | [http://localhost:8002/dashboard](http://localhost:8002/dashboard) | Interfaz de sucursal para simulación |
+| 🐇 **RabbitMQ (Consola Admin)** | [http://localhost:15672](http://localhost:15672) | Usuario: `ecomarket_user` / Contraseña: `ecomarket_password` |
+
+---
+
+## 🎬 **Video de Demostración (E2E)**
+
+🎥 Un video corto (1-2 minutos) muestra:
+
+- ⚖️ Balanceo de carga en acción (Round Robin).  
+- 💪 Tolerancia a fallos al detener una instancia.  
+- 🔁 Recuperación automática al reiniciarla.  
+
+➡️ **[Ver Video de Demostración Aquí](./video_demo.mp4)**  
+(Guarda el archivo como `video_demo.mp4` en el repositorio para que este enlace funcione.)
+
+---
+
+## 📂 **Repositorio del Proyecto**
+
+El código fuente completo se encuentra disponible en el siguiente enlace:
+
+➡️ **[Ver Repositorio del Proyecto en GitHub](#)**  
+
+---
+
+## 📄 **Informe Técnico: Hito 2 - Escalabilidad y Resiliencia en EcoMarket**
+
+### 1️⃣ Justificación de Escalabilidad (Horizontal vs. Vertical)
+
+Para la evolución de la API Central de EcoMarket, se optó por una estrategia de **escalabilidad horizontal (“escalar hacia afuera”)** en lugar de **vertical (“escalar hacia arriba”)**.
+
+#### 🧱 Escalabilidad Vertical
+Implica aumentar los recursos de una sola máquina (más CPU, más RAM).  
+Aunque es simple de implementar inicialmente, tiene un límite físico, es costoso y presenta un **punto único de fallo (SPOF)**.  
+Si esa máquina falla, todo el servicio central se detiene.
+
+#### ⚡ Escalabilidad Horizontal
+Implica añadir más instancias del servicio (contenedores) y distribuir la carga entre ellas mediante un balanceador (Nginx).
+
+---
+
+### ✅ Ventajas de la Escalabilidad Horizontal
+
+- **Alta Disponibilidad (Resiliencia):**  
+  Al tener dos instancias (central-api-1 y central-api-2), si una falla o entra en mantenimiento, Nginx redirige automáticamente el tráfico a la instancia activa.  
+  ➡️ El servicio nunca se interrumpe.
+
+- **Mayor Rendimiento (Throughput):**  
+  Dos instancias pueden manejar el doble de peticiones simultáneas.  
+  Esto permite mantener tiempos de respuesta bajos incluso bajo carga.
+
+- **Costo-Efectividad y Flexibilidad:**  
+  Es más rentable desplegar varias instancias pequeñas que una máquina de gran capacidad.  
+  Durante picos de tráfico (por ejemplo, *Black Friday*), se pueden levantar 5 instancias, y reducir a 2 en horas de baja demanda.
+
+---
+
+### ⚙️ Retos Abordados
+
+El principal reto en una arquitectura horizontal es la **gestión del estado**.  
+Si cada API mantuviera su propia base de datos, el sistema sería inconsistente.
+
+#### 🔧 Soluciones Aplicadas
+
+- **🧠 Estado de Base de Datos (Inventario, Ventas, Usuarios):**  
+  Se centralizó el almacenamiento en Redis, permitiendo que ambas instancias compartan los mismos datos en memoria.
+
+- **📨 Estado de Tareas (Notificaciones):**  
+  Se desacopló mediante RabbitMQ.  
+  Para evitar duplicaciones de mensajes, se implementó **idempotencia con locks en Redis** (`sale_lock:` y `user_event_lock:`), asegurando que solo la primera instancia procese cada evento.
+
+---
+
+### 2️⃣ Distribución Lograda (Resultados)
+
+Se configuró Nginx como proxy reverso para balancear el tráfico entre las dos instancias de la API Central.  
+El algoritmo usado es **Round Robin**, que distribuye las peticiones de manera equitativa.
+
+#### 📜 Evidencia (Logs)
+```
+central-api-1 | INFO: 172.18.0.7:55930 - "GET /dashboard HTTP/1.0" 200 OK
+central-api-2 | INFO: 172.18.0.7:49522 - "GET /dashboard HTTP/1.0" 200 OK
+central-api-1 | INFO: 172.18.0.7:55946 - "GET /dashboard HTTP/1.0" 200 OK
+central-api-2 | INFO: 172.18.0.7:49536 - "GET /dashboard HTTP/1.0" 200 OK
+```
+
+📈 Cada solicitud alterna entre `central-api-1` y `central-api-2`, mostrando una **distribución equilibrada del tráfico**.
+
+#### 🧩 Prueba de Fallo
+```bash
+docker stop central-api-1
+```
+
+El dashboard siguió operativo gracias a que **Nginx redirigió el 100% de las peticiones a `central-api-2`**, demostrando la **tolerancia a fallos y resiliencia del sistema**.
+
+---
+
+### 3️⃣ Mejoras Futuras
+
+| Mejora | Descripción |
+|---------|-------------|
+| 🔁 **Auto-Scaling** | Implementar Kubernetes o Docker Swarm para escalar instancias dinámicamente según carga. |
+| 📊 **Monitoreo en Tiempo Real** | Integrar Prometheus y Grafana para observar métricas y latencia. |
+| ⚖️ **Algoritmo de Balanceo Inteligente** | Cambiar a *least_conn* para distribuir peticiones al servidor con menos conexiones activas. |
+
+---
+
+## 📋 **Entrega y Evaluación (Avance Hito 2 - 10%)**
+
+- **Repositorio:** Código con Docker Compose para Nginx + instancias (GitHub o similar).  
+- **Diagrama:** Flujo de tráfico (como el mostrado arriba).  
+- **Informe breve (1-2 páginas):**
+  - Justificación de escalabilidad: Ventajas (throughput, resiliencia) vs retos (sesiones sticky si needed).  
+  - Distribución lograda: Requests alternados en logs de instancias.  
+  - Mejoras futuras: Auto-scaling, métricas (Prometheus).  
+
+💡 **Tip para entrega:**  
+Incluye este `README.md` con los comandos (`docker-compose up`) y un video corto (1 min) E2E:  
+👉 Flood de requests → Ver distribución en logs.
+
+---
+
+🎯 **Fin del Documento - EcoMarket Hito 2**
