@@ -103,7 +103,7 @@ Usa `docker-compose stop/start central1` para simular fallos sin eliminar el con
 - 💪 Tolerancia a fallos al detener una instancia.  
 - 🔁 Recuperación automática al reiniciarla.  
 
-➡️ **[Ver Video de Demostración Aquí]([./video_demo.mp4](https://drive.google.com/file/d/1K_R1VLqmOyyltJJGILgpGwDb_l1TsNeA/view?usp=sharing))**  
+➡️ **[Ver Video de Demostración Aquí](https://drive.google.com/file/d/1K_R1VLqmOyyltJJGILgpGwDb_l1TsNeA/view?usp=sharing)**  
 (Guarda el archivo como `video_demo.mp4` en el repositorio para que este enlace funcione.)
 
 ---
