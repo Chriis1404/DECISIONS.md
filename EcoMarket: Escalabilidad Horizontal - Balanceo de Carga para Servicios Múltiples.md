@@ -2,7 +2,7 @@
 ### 🧩 *Alta Disponibilidad, Escalabilidad y Balanceo de Carga*
 
 📅 **Fecha:** 5 de noviembre de 2025  
-👤 **Autor:** [Tu Nombre]  
+👤 **Autor:** [Christofer Roberto Esparza Chavero, Brian Garcia y Juan Cordova]  
 📂 **Proyecto:** EcoMarket - API Central y Sucursal  
 
 ---
