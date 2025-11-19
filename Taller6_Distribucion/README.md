@@ -88,10 +88,12 @@ Un video corto (1 minuto) muestra la prueba E2E:
 
 El código fuente completo se encuentra en la carpeta **Taller6_Distribucion/**:
 
-- Docker Compose (Infraestructura)  
-- Script de Inicialización (init-primary.sh)  
-- Router de Sharding (shard_router.py)  
-- Test de Validación (load_test.py)
+- [Docker Compose (Infraestructura)](https://github.com/Chriis1404/DECISIONS.md/blob/main/Taller6_Distribucion/docker-compose.yml)
+- [Script de Inicialización (init-primary.sh)](https://github.com/Chriis1404/DECISIONS.md/blob/main/Taller6_Distribucion/init-primary.sh)
+- [Router de Sharding (shard_router.py)](https://github.com/Chriis1404/DECISIONS.md/blob/main/Taller6_Distribucion/shard_router.py)
+- [Test de Validación (load_test.py)](https://github.com/Chriis1404/DECISIONS.md/blob/main/Taller6_Distribucion/load_test.py)
+- [Ver Repositorio del Proyecto en GitHub "CENTRAL.API"](https://github.com/Chriis1404/DECISIONS.md/blob/main/CentralAPI.py)
+- [Ver Repositorio del Proyecto en GitHub "SUCURSAL.API"](https://github.com/Chriis1404/DECISIONS.md/blob/main/SucursalAPIdemo.py)
 
 ---
 
