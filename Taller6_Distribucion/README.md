@@ -61,6 +61,9 @@ docker exec ecomarket-db-primary psql -U postgres -d ecomarket -c "SELECT client
 
 # 4️⃣ Detener el clúster
 docker-compose down
+
+# 5️⃣ Validación de lectura
+docker exec ecomarket-db-secondary-1 psql -U postgres -d ecomarket -c "SELECT count(*) FROM orders;"
 ```
 
 ---
