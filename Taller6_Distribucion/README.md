@@ -85,6 +85,7 @@ Un video corto (1 minuto) muestra la prueba E2E:
 - 📝 Escritura en Primary (ejecutando load_test.py).  
 - ⚡ Verificación de Lectura inmediata en un Secondary (lag mínimo).  
 
+[VIDEO AQUI](https://drive.google.com/file/d/15xSLVeBsXNBoUfimfqmJsd55mjisBk7q/view?usp=sharing)
 ---
 
 ## 📂 **Repositorio del Proyecto**
