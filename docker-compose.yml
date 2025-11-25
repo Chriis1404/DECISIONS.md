@@ -1,0 +1,248 @@
+version: "3.9"
+
+services:
+  # ========================
+  # NGINX LOAD BALANCER
+  # ========================
+  nginx-lb:
+    image: nginx:stable-alpine
+    container_name: nginx-lb
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      central1:
+        condition: service_started
+      central2:
+        condition: service_started
+    networks:
+      - ecomarket_net
+
+  # ========================
+  # CENTRAL INSTANCIA 1
+  # ========================
+  central1:
+    build:
+      context: .
+      dockerfile: ./Ecomarket/Central/Dockerfile
+    container_name: central-api-1
+    expose:
+      - "8000"
+    volumes:
+      - ./Ecomarket:/app/Ecomarket
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+      - BRANCHES=http://sucursal-demo:8002
+      - RABBITMQ_HOST=rabbitmq
+      - SERVER_NAME=CENTRAL_1
+      - JWT_SECRET=mi_clave_secreta_desde_docker_12345  # TALLER 7 "JWT"
+    command: uvicorn Ecomarket.Central.CentralAPI:app --host 0.0.0.0 --port 8000
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ecomarket_net
+
+  # ========================
+  # CENTRAL INSTANCIA 2
+  # ========================
+  central2:
+    build:
+      context: .
+      dockerfile: ./Ecomarket/Central/Dockerfile
+    container_name: central-api-2
+    expose:
+      - "8000"
+    volumes:
+      - ./Ecomarket:/app/Ecomarket
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+      - BRANCHES=http://sucursal-demo:8002
+      - RABBITMQ_HOST=rabbitmq
+      - SERVER_NAME=CENTRAL_2
+      - JWT_SECRET=mi_clave_secreta_desde_docker_12345  # TALLER 7 "JWT"
+    command: uvicorn Ecomarket.Central.CentralAPI:app --host 0.0.0.0 --port 8000
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ecomarket_net
+
+  # ========================
+  # SUCURSAL DEMO
+  # ========================
+  sucursal-demo:
+    build:
+      context: .
+      dockerfile: ./Ecomarket/Sucursal/Dockerfile
+    container_name: sucursal-demo
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./Ecomarket:/app/Ecomarket
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+      - REDIS_HOST=redis
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_USER=ecomarket_user
+      - RABBITMQ_PASS=ecomarket_password
+      - CENTRAL_API_URL=http://nginx-lb:80
+    command: uvicorn Ecomarket.Sucursal.SucursalAPIdemo:app --host 0.0.0.0 --port 8002
+    depends_on:
+      nginx-lb:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ecomarket_net
+
+  # ========================
+  # REDIS
+  # ========================
+  redis:
+    image: redis:6.2-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - ecomarket_net
+
+  # ========================
+  # RABBITMQ
+  # ========================
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ecomarket_user
+      RABBITMQ_DEFAULT_PASS: ecomarket_password
+    volumes:
+      - ./rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ecomarket_net
+
+  # ==========================================
+  # CLUSTER BASE DE DATOS (TALLER 6)
+  # ==========================================
+  
+  # --- BD PRIMARIA (ESCRITURA) ---
+  db-primary:
+    image: postgres:15
+    container_name: ecomarket-db-primary
+    environment:
+      POSTGRES_DB: ecomarket
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./primary-data:/var/lib/postgresql/data
+      - ./init-primary.sh:/docker-entrypoint-initdb.d/init.sh
+    command: |
+      postgres 
+      -c wal_level=replica 
+      -c hot_standby=on 
+      -c max_wal_senders=3 
+      -c wal_keep_size=1GB
+      -c listen_addresses='*'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ecomarket_net
+
+  # --- BD SECUNDARIA 1 (LECTURA) ---
+  db-secondary-1:
+    image: postgres:15
+    container_name: ecomarket-db-secondary-1
+    environment:
+      POSTGRES_DB: ecomarket
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_pass
+      PGDATA: /var/lib/postgresql/data/pgdata
+      PGPASSWORD: rep_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./secondary1-data:/var/lib/postgresql/data
+    # [CORRECCIÓN]: Añadido listen_addresses='*' al final
+    command: |
+      bash -c "
+      until pg_basebackup -h db-primary -D /var/lib/postgresql/data/pgdata -U replicator -Xs -P -R; do
+        echo 'Esperando a que primario esté listo...'
+        sleep 2
+      done
+      chown -R postgres:postgres /var/lib/postgresql/data/pgdata
+      exec gosu postgres postgres -c hot_standby=on -c listen_addresses='*'
+      "
+    depends_on:
+      db-primary:
+        condition: service_healthy
+    networks:
+      - ecomarket_net
+
+  # --- BD SECUNDARIA 2 (LECTURA) ---
+  db-secondary-2:
+    image: postgres:15
+    container_name: ecomarket-db-secondary-2
+    environment:
+      POSTGRES_DB: ecomarket
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_pass
+      PGDATA: /var/lib/postgresql/data/pgdata
+      PGPASSWORD: rep_password
+    ports:
+      - "5434:5432"
+    volumes:
+      - ./secondary2-data:/var/lib/postgresql/data
+    # [CORRECCIÓN]: Añadido listen_addresses='*' al final
+    command: |
+      bash -c "
+      until pg_basebackup -h db-primary -D /var/lib/postgresql/data/pgdata -U replicator -Xs -P -R; do
+        echo 'Esperando a que primario esté listo...'
+        sleep 2
+      done
+      chown -R postgres:postgres /var/lib/postgresql/data/pgdata
+      exec gosu postgres postgres -c hot_standby=on -c listen_addresses='*'
+      "
+    depends_on:
+      db-primary:
+        condition: service_healthy
+    networks:
+      - ecomarket_net
+
+# ========================
+# RED DE SERVICIOS
+# ========================
+networks:
+  ecomarket_net:
+    driver: bridge
