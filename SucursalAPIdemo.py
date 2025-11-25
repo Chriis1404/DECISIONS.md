@@ -499,7 +499,7 @@ async def process_sale(sale_request: SaleRequest):
     return sale_response
 
 # =======================================================
-# === ENDPOINT DE SINCRONIZACIÓN DE HISTORIAL (CORREGIDO) ===
+# === ENDPOINT DE SINCRONIZACIÓN DE HISTORIAL (CORREGIDO) === TALLER 7 APLICADO
 # =======================================================
 @app.post("/sync-sale-history", tags=["Sincronización"])
 async def sync_sale_history(notification: SaleNotificationFromCentral):
