@@ -1,8 +1,9 @@
-from fastapi import FastAPI, HTTPException, Form
+from fastapi import FastAPI, HTTPException, Form, Depends, Security # ✨ Agrega Depends, Security
 from fastapi.responses import HTMLResponse, JSONResponse 
+from fastapi.security import OAuth2PasswordBearer # ✨ NUEVO
 from pydantic import BaseModel, field_validator
-from typing import Dict, List, Union, Optional
-from datetime import datetime
+from typing import Dict, List, Union, Optional, Annotated # ✨ Agrega Annotated
+from datetime import datetime, timedelta # ✨ Agrega timedelta
 import os
 import logging
 import httpx
@@ -12,6 +13,8 @@ import uuid
 import time
 import pika
 import redis 
+import jwt # ✨ NUEVO (pip install pyjwt)
+from passlib.context import CryptContext # ✨ NUEVO (pip install passlib)
 from threading import Thread
 
 # --- CONFIGURACIÓN Y MODELOS ---
@@ -28,6 +31,17 @@ USERS_HASH_KEY = "global_user_data"
 INVENTORY_HASH_KEY = "central_inventory"
 SALES_LIST_KEY = "central_sales_history"
 TEST_PRODUCT_ID = 999
+
+# [NUEVO TALLER 7] --- CONFIGURACIÓN DE SEGURIDAD (JWT) ---
+SECRET_KEY = os.getenv("JWT_SECRET", "mi_super_clave_secreta_ecomarket_2025") 
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
+# Contexto para encriptar contraseñas
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Esquema de autenticación
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 def get_redis_client():
     """Retorna el cliente Redis, decodificando respuestas para obtener strings."""
@@ -101,6 +115,56 @@ initial_inventory: Dict[int, Product] = {
     5: Product(id=5, name="Quinoa", price=12.50, stock=15),
     TEST_PRODUCT_ID: Product(id=TEST_PRODUCT_ID, name="PRODUCTO DE TEST (NO CONTABILIZA)", price=0.00, stock=0) 
 }
+
+# =================================================================
+# === [NUEVO] LÓGICA DE SEGURIDAD (TALLER 7) ======================
+# =================================================================
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+# Base de datos de usuarios simulada
+users_db = {
+    "admin": {
+        "username": "admin",
+        "hashed_password": pwd_context.hash("admin123"), # Pass: admin123
+        "role": "admin"
+    }
+}
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+# EL "CADENERO" (Middleware)
+def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Credenciales inválidas o expiradas",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        role: str = payload.get("role")
+        if username is None:
+            raise credentials_exception
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="El token ha expirado")
+    except jwt.InvalidTokenError:
+        raise credentials_exception
+    
+    return {"username": username, "role": role}
 
 # =================================================================
 # === FUNCIONES DE ACCESO A DATOS (REDIS) ========================
@@ -492,13 +556,25 @@ async def root():
         "total_products": len(inventory),
         "total_notifications": sales_count
     }
+# [TALLER 7] Endpoint para obtener el Token
+@app.post("/login", response_model=Token, tags=["Autenticacion"])
+async def login(form_data: LoginRequest):
+    user = users_db.get(form_data.username)
+    if not user or not verify_password(form_data.password, user["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
+    
+    access_token = create_access_token(data={"sub": user["username"], "role": user["role"]})
+    return {"access_token": access_token, "token_type": "bearer"}
 
 @app.get("/inventory", response_model=List[Product], tags=["Inventario"])
 async def get_inventory():
     return await get_all_products_from_redis()
 
 @app.post("/inventory", response_model=Product, tags=["Inventario"])
-async def add_product(product: Product):
+async def add_product(
+    product: Product, 
+    current_user: dict = Depends(get_current_user) # 🔒 AQUÍ ESTÁ EL CANDADO
+):
     existing_product = await get_product_from_redis(product.id)
     if existing_product:
         raise HTTPException(status_code=400, detail="El producto ya existe")
@@ -508,7 +584,11 @@ async def add_product(product: Product):
     return product
 
 @app.put("/inventory/{product_id}", response_model=Product, tags=["Inventario"])
-async def update_product(product_id: int, product: Product):
+async def update_product(
+    product_id: int, 
+    product: Product,
+    current_user: dict = Depends(get_current_user) # 🔒 CANDADO
+):
     if product_id != product.id:
         raise HTTPException(status_code=400, detail="El ID del producto en la URL y en el cuerpo no coinciden.")
     
@@ -521,7 +601,10 @@ async def update_product(product_id: int, product: Product):
     return product
 
 @app.delete("/inventory/{product_id}", tags=["Inventario"])
-async def delete_product(product_id: int):
+async def delete_product(
+    product_id: int,
+    current_user: dict = Depends(get_current_user) # 🔒 CANDADO
+):
     removed = await get_product_from_redis(product_id)
     if not removed:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
@@ -555,73 +638,56 @@ DASHBOARD_HTML_TEMPLATE = """
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>🔴EcoMarket Central - {SERVER_NAME_TITLE}</title> <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<title>🔴EcoMarket Central - {SERVER_NAME_TITLE}</title> 
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <style>
 body {{ background-color: #FAFAFA; font-family: 'Segoe UI', sans-serif; color: #333; }}
-.navbar {{ 
-    background-color: #ED4040; color: white; padding: 0.8rem 1.5rem; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); 
-}}
+.navbar {{ background-color: #ED4040; color: white; padding: 0.8rem 1.5rem; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); }}
 .navbar-brand {{ font-weight: 600; font-size: 1.3rem; color: white !important; }}
-.metric-item {{ 
-    text-align: center; background: rgba(255, 255, 255, 0.15); border-radius: 8px; 
-    padding: 0.4rem 0.8rem; font-size: 0.85rem; color: #fff; min-width: 90px; 
-    box-shadow: inset 0 0 6px rgba(255, 255, 255, 0.2); 
-}}
-.metric-item h6 {{ margin: 0; font-size: 0.75rem; font-weight: 500; opacity: 0.9; }}
-.metric-item p {{ margin: 0; font-size: 1rem; font-weight: 600; color: rgba(255,255,255,0.9); }}
-.btn-main, .btn-sale {{
-    border: 1px solid rgba(255,255,255,0.35); border-radius: 8px; font-weight: 600;
-    padding: 6px 14px; color: #fff; transition: all 0.25s ease; font-size: 0.9rem;
-}}
-.btn-main {{ background-color: #F06060; }}
-.btn-sale {{ background-color: #ED4040; }}
-.btn-main:hover, .btn-sale:hover {{
-    box-shadow: 0 0 14px rgba(255,255,255,0.6); transform: scale(1.03);
-}}
+.metric-item {{ text-align: center; background: rgba(255, 255, 255, 0.15); border-radius: 8px; padding: 0.4rem 0.8rem; font-size: 0.85rem; color: #fff; min-width: 90px; margin-right: 10px; }}
+.metric-item p {{ margin: 0; font-weight: 600; }}
+.btn-sale {{ background-color: #ED4040; border: 1px solid rgba(255,255,255,0.5); color: white; }}
 .card {{ border: none; border-radius: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.06); background-color: #fff; }}
-.card-header.bg-coral {{ background-color: #F06060; color: #fff; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }}
+.card-header.bg-coral {{ background-color: #F06060; color: #fff; font-weight: 600; }}
 .card-header.bg-intense {{ background-color: #ED4040; color: #fff; font-weight: 600; }}
-.table thead th {{ background-color: #ED4040; color: white; border: none; font-weight: 500; }}
-.table tbody tr:hover {{ background-color: #FFF0F0; }}
-.bg-stats {{ background-color: #007bff; }}
-#toast {{
-    position: fixed; top: 20px; right: 20px; min-width: 250px; padding: 10px 20px; border-radius: 8px; 
-    color: white; font-weight: 600; z-index: 1050; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    display: none; 
-}}
-#toast.success {{ background-color: #4CAF50; }}
-#toast.error {{ background-color: #ED4040; }}
-#toast.warning {{ background-color: #FFC107; color: #333; }}
+#toast {{ position: fixed; top: 20px; right: 20px; padding: 10px 20px; border-radius: 8px; color: white; font-weight: 600; z-index: 1050; display: none; }}
+#toast.success {{ background-color: #4CAF50; }} #toast.error {{ background-color: #ED4040; }} #toast.warning {{ background-color: #FFC107; color: #333; }}
 </style>
 </head>
 <body>
 <nav class="navbar navbar-expand-lg navbar-dark">
-    <a class="navbar-brand" href="#">EcoMarket Central API - {SERVER_NAME_TITLE}</a> <div class="ms-auto d-flex align-items: center">
-        <div class="metrics-expanded d-flex me-4"> 
-            <div class="metric-item me-3"><h6>Productos</h6><p>{total_products_count}</p></div>
-            <div class="metric-item me-3"><h6>Ventas</h6><p>{total_sales_count}</p></div>
-            <div class="metric-item me-3"><h6>Recaudación</h6><p>${total_revenue:.2f}</p></div>
-            <a href="/users" style="text-decoration:none; color:inherit;"> <div class="metric-item bg-stats me-3"><h6>Usuarios Creados</h6><p>{TOTAL_USERS_CREATED}</p></div>
-            </a>
+    <a class="navbar-brand" href="#">EcoMarket Central - {SERVER_NAME_TITLE}</a>
+    <div class="ms-auto d-flex align-items: center">
+        <div class="d-flex me-3"> 
+            <div class="metric-item"><h6>Productos</h6><p>{total_products_count}</p></div>
+            <div class="metric-item"><h6>Ventas</h6><p>{total_sales_count}</p></div>
+            <div class="metric-item"><h6>Recaudación</h6><p>${total_revenue:.2f}</p></div>
+             <a href="/users" style="text-decoration:none; color:inherit;"> <div class="metric-item bg-primary"><h6>Usuarios</h6><p>{TOTAL_USERS_CREATED}</p></div></a>
         </div>
-        <div class="nav-separator"></div>
-        <a href="/test-sale" class="btn btn-sale ms-2">⚡️ Test Venta Sucursal</a> 
+        
+        <button id="loginBtn" class="btn btn-light text-danger fw-bold me-2" onclick="loginPrompt()">🔑 Login</button>
+        <button id="logoutBtn" class="btn btn-outline-light me-2" onclick="logout()" style="display:none;">🚪 Logout</button>
+        
+        <a href="/test-sale" class="btn btn-sale">⚡️ Test Venta</a> 
     </div>
 </nav>
-<div class="main-container container mt-4">
+
+<div class="container mt-4">
+    <div id="auth-warning" class="alert alert-warning text-center" style="display:block;">
+        🔒 <b>Modo Solo Lectura:</b> Inicia sesión (admin/admin123) para agregar o editar productos.
+    </div>
+
     <div class="row g-4">
         <div class="col-md-5">
             <div class="card">
-                <div class="card-header bg-coral">
-                    <span>Inventario Central (Compartido en Redis)</span>
+                <div class="card-header bg-coral d-flex justify-content-between align-items-center">
+                    <span>Inventario Central</span>
                     <div class="dropdown">
-                        <button class="btn btn-sm btn-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" style="color: #F06060;">
-                            <span style="font-size: 1.2rem; font-weight: bold;">+</span>
-                        </button>
+                        <button class="btn btn-sm btn-light dropdown-toggle" type="button" data-bs-toggle="dropdown" style="color: #F06060;"><b>+</b></button>
                         <ul class="dropdown-menu dropdown-menu-end">
-                            <li><a class="dropdown-item" data-bs-toggle="modal" data-bs-target="#addProductModal">➕ Añadir Nuevo Producto</a></li>
-                            <li><a class="dropdown-item" data-bs-toggle="modal" data-bs-target="#editProductSelectModal">✏️ Editar Producto (por ID)</a></li>
-                            <li><a class="dropdown-item" data-bs-toggle="modal" data-bs-target="#deleteProductSelectModal">🗑️ Eliminar Producto (por ID)</a></li>
+                            <li><a class="dropdown-item" data-bs-toggle="modal" data-bs-target="#addProductModal">➕ Añadir</a></li>
+                            <li><a class="dropdown-item" data-bs-toggle="modal" data-bs-target="#editProductSelectModal">✏️ Editar</a></li>
+                            <li><a class="dropdown-item" data-bs-toggle="modal" data-bs-target="#deleteProductSelectModal">🗑️ Eliminar</a></li>
                         </ul>
                     </div>
                 </div>
@@ -637,11 +703,11 @@ body {{ background-color: #FAFAFA; font-family: 'Segoe UI', sans-serif; color: #
         </div>
         <div class="col-md-7">
             <div class="card">
-                <div class="card-header bg-intense">Historial de Notificaciones de Ventas (Compartido en Redis)</div>
+                <div class="card-header bg-intense">Historial de Ventas</div>
                 <div class="card-body p-0">
                     <div class="table-responsive" style="max-height:400px;">
                         <table class="table table-striped table-sm mb-0 align-middle">
-                            <thead><tr><th>Fecha</th><th>Sucursal</th><th>Producto</th><th>Cant.</th><th>Total</th><th>Recibido</th><th>Cambio</th><th>ID Venta</th></tr></thead>
+                            <thead><tr><th>Fecha</th><th>Sucursal</th><th>Producto</th><th>Cant.</th><th>Total</th><th>Recibido</th><th>Cambio</th><th>ID</th></tr></thead>
                             <tbody>{notifications_html}</tbody>
                         </table>
                     </div>
@@ -650,6 +716,7 @@ body {{ background-color: #FAFAFA; font-family: 'Segoe UI', sans-serif; color: #
         </div>
     </div>
 </div>
+
 {add_product_modal_html}
 {edit_product_select_modal_html}
 {delete_product_select_modal_html}
@@ -796,23 +863,84 @@ DELETE_PRODUCT_SELECT_MODAL_HTML = """
 """
 DASHBOARD_JS_SCRIPT = """
 <script>
+// --- LÓGICA DE SEGURIDAD (JWT) ---
+let JWT_TOKEN = localStorage.getItem("ecomarket_token");
+
+function updateUI() {
+    const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const warning = document.getElementById('auth-warning');
+    
+    if (JWT_TOKEN) {
+        if(loginBtn) loginBtn.style.display = 'none';
+        if(logoutBtn) logoutBtn.style.display = 'inline-block';
+        if(warning) warning.style.display = 'none';
+    } else {
+        if(loginBtn) loginBtn.style.display = 'inline-block';
+        if(logoutBtn) logoutBtn.style.display = 'none';
+        if(warning) warning.style.display = 'block';
+    }
+}
+
+// Función para hacer peticiones con el Token (El "Cadenero" del navegador)
+async function authFetch(url, options = {}) {
+    if (!JWT_TOKEN) {
+        showToast("🔒 Inicia sesión para realizar esta acción", "warning");
+        throw new Error("No token");
+    }
+    options.headers = options.headers || {};
+    options.headers["Authorization"] = "Bearer " + JWT_TOKEN;
+    return fetch(url, options);
+}
+
+// Login Manual
+async function loginPrompt() {
+    const user = prompt("Usuario (admin):");
+    if(!user) return;
+    const pass = prompt("Contraseña (admin123):");
+    if(!pass) return;
+
+    try {
+        const res = await fetch("/login", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({username: user, password: pass})
+        });
+        if(res.ok) {
+            const data = await res.json();
+            JWT_TOKEN = data.access_token;
+            localStorage.setItem("ecomarket_token", JWT_TOKEN);
+            showToast("✅ Login exitoso");
+            updateUI();
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast("❌ Credenciales incorrectas", "error");
+        }
+    } catch(e) { showToast("Error de red", "error"); }
+}
+
+function logout() {
+    localStorage.removeItem("ecomarket_token");
+    JWT_TOKEN = null;
+    updateUI();
+    showToast("👋 Sesión cerrada");
+    setTimeout(() => location.reload(), 1000);
+}
+
 function showToast(message, type='success') {
-  const toast = document.createElement('div');
-  const existingToast = document.getElementById('toast');
-  if (existingToast) existingToast.remove();
-  
-  toast.id = 'toast';
+  const toast = document.getElementById('toast');
   toast.className = type;
   toast.innerHTML = message;
-  document.body.appendChild(toast);
   toast.style.display = 'block';
-  setTimeout(() => toast.remove(), 3500);
+  toast.style.backgroundColor = type === 'success' ? '#4CAF50' : (type === 'warning' ? '#FF9800' : '#ED4040');
+  setTimeout(() => toast.style.display = 'none', 3500);
 }
+
+// --- FORMULARIOS CONECTADOS A SEGURIDAD ---
 
 document.getElementById('addProductForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
-
     const payload = {
         id: parseInt(formData.get("id")),
         name: formData.get("name"),
@@ -821,67 +949,46 @@ document.getElementById('addProductForm').addEventListener('submit', async (e) =
     };
 
     try {
-        const res = await fetch("/inventory", {
+        // USAMOS authFetch EN LUGAR DE FETCH NORMAL
+        const res = await authFetch("/inventory", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
         });
 
         if (res.ok) {
-            showToast("✅ Producto agregado y sincronizado correctamente.");
+            showToast("✅ Producto agregado correctamente.");
             const modal = bootstrap.Modal.getInstance(document.getElementById('addProductModal'));
             modal.hide();
             setTimeout(() => location.reload(), 1500);
         } else {
             const error = await res.json();
-            console.error("Error al agregar producto:", error);
-            showToast("❌ Error: " + (error.detail || "Hubo un problema."), "error");
+            showToast("❌ Error: " + (error.detail || "Fallo"), "error");
         }
-    } catch (err) {
-        console.error(err);
-        showToast("❌ Error de conexión al agregar producto.", "error");
-    }
-});
-
-document.getElementById('editProductSelectForm').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const id = parseInt(formData.get("product_id"));
-    if (id) {
-        window.location.href = `/edit-product/${id}`;
-    } else {
-        showToast("❌ Introduce un ID válido.", "error");
-    }
+    } catch (err) { console.error(err); }
 });
 
 document.getElementById('deleteProductSelectForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const formData = new FormData(e.target);
-    const id = parseInt(formData.get("product_id"));
-
-    if (id) {
-        try {
-            const res = await fetch(`/delete-product/${id}`, { method: 'DELETE' });
-            
-            if (res.ok) {
-                showToast("🗑️ Producto eliminado y sincronizado.", "warning");
-            } else if (res.status === 404) {
-                showToast("❌ Producto no encontrado.", "error");
-            } else {
-                showToast("❌ Error al eliminar el producto.", "error");
-            }
-            const modal = bootstrap.Modal.getInstance(document.getElementById('deleteProductSelectModal'));
-            modal.hide();
-            setTimeout(() => location.reload(), 1500);
-
-        } catch (err) {
-            showToast("❌ Error de conexión.", "error");
-        }
-
-    } else {
-        showToast("❌ Introduce un ID válido.", "error");
-    }
+    const id = new FormData(e.target).get("product_id");
+    try {
+        // USAMOS authFetch AQUÍ TAMBIÉN
+        const res = await authFetch(`/inventory/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+            showToast("🗑️ Producto eliminado.");
+            setTimeout(() => location.reload(), 1000);
+        } else { showToast("❌ Error al eliminar", "error"); }
+    } catch(e) { console.error(e); }
 });
+
+document.getElementById('editProductSelectForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const id = new FormData(e.target).get("product_id");
+    if(id) window.location.href = `/edit-product/${id}`;
+});
+
+// Iniciar estado de la interfaz
+updateUI();
 </script>
 """
 CRUD_FORM_BASE_HTML = """
