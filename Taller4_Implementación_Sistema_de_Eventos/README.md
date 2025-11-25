@@ -101,7 +101,8 @@ Observar los logs de la Central. Se deben ver múltiples acciones ocurriendo sim
 ## 🎬 Video de Demostración
 Explicación detallada del patrón Pub/Sub y demostración del flujo de mensajes en RabbitMQ Management UI.  
 👉 Ver Video de Explicación Pub/Sub (1 min)
-[VIDEO AQUÍ](https://drive.google.com/file/d/1RGvXK39IKS6eGHSssG9YYNzUEwWLT2yl/view?usp=sharing)
+
+- [VIDEO AQUÍ](https://drive.google.com/file/d/1RGvXK39IKS6eGHSssG9YYNzUEwWLT2yl/view?usp=sharing)
 ---
 
 ## 📂 Archivos Clave
