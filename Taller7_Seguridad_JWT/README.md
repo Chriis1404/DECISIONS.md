@@ -120,76 +120,57 @@ Video mostrando:
 
 ## 📄 **Informe Técnico: Taller 7 - Seguridad JWT**
 
-### 1️⃣ Justificación de JWT
+### 1. Introducción y Contexto del Problema
+En las fases anteriores del proyecto EcoMarket, los esfuerzos se concentraron en garantizar la alta disponibilidad y la escalabilidad horizontal. Sin embargo, esta arquitectura distribuida presentaba una vulnerabilidad crítica: la **API Central operaba sin una capa de autenticación**. Cualquier agente podía realizar operaciones destructivas en el inventario.
 
-JWT fue elegido sobre sesiones tradicionales porque EcoMarket es un sistema distribuido:
+El desafío principal radicaba en la naturaleza distribuida del sistema. Al tener múltiples réplicas de la API Central bajo un balanceador de carga, el uso de **sesiones tradicionales (stateful)** en memoria era inviable: si la petición llega a la réplica A, pero la sesión se creó en la réplica B, el usuario pierde su acceso.
 
-- **Stateless:** No se guardan sesiones en el servidor.  
-- **Escalable:** Cualquier réplica puede validar tokens solo con la SECRET_KEY.
+### 2. Solución Implementada: Arquitectura Stateless con JWT
+Para resolver esto sin comprometer la escalabilidad, implementamos un modelo de autenticación **Stateless** (Sin Estado) utilizando **JSON Web Tokens (JWT)**.
 
-**1. ¿Por qué hicimos esto? (Justificación)**
-- En los talleres anteriores nos enfocamos en que el sistema escalara y no se cayera, pero teníamos un problema grave: la API Central estaba de puertas abiertas. Cualquiera con Postman podía borrar nuestro inventario o meter datos falsos.
+A diferencia de las sesiones tradicionales, JWT permite que el estado de la autenticación viaje con el cliente. Cuando un administrador inicia sesión, la API Central genera un token firmado criptográficamente.
 
-- Para solucionar esto en nuestra arquitectura distribuida (donde tenemos varias réplicas de la API y balanceadores de carga), las sesiones tradicionales ("cookies de sesión") no eran viables porque obligan al servidor a recordar al usuario. Si esa instancia del servidor se reinicia, adiós sesión.
+> **Ventaja clave:** Cualquier contenedor Docker de nuestra API puede validar el token por su cuenta verificando la firma con la `SECRET_KEY`, sin necesidad de consultar una base de datos centralizada de sesiones en cada petición (Rendimiento O(1)).
 
-- Por eso elegimos JWT (JSON Web Tokens).
+### 3. Detalles de la Implementación
+La seguridad se integró en el núcleo de `CentralAPI.py` siguiendo tres pilares fundamentales:
 
-- Es "Stateless" (Sin Estado): El servidor no guarda nada. Toda la información de la sesión viaja dentro del token que tiene el cliente.
+#### A. Gestión de Credenciales (Hashing)
+Utilizamos la librería **Passlib** con el algoritmo **bcrypt**. Nunca almacenamos contraseñas en texto plano. Al hacer login, el sistema compara el hash de la contraseña ingresada con el hash almacenado, protegiendo las credenciales ante posibles fugas de datos (Data Breaches).
 
-- Es Rápido: Validar el token es solo una operación matemática (revisar la firma), no hay que ir a preguntar a la base de datos cada vez.
+#### B. El "Cadenero" (Middleware)
+Implementamos la función `get_current_user` en FastAPI. Esta actúa como un guardián que intercepta las peticiones antes de llegar a la lógica de negocio:
+1.  Busca el encabezado `Authorization: Bearer <token>`.
+2.  Verifica la **Firma** (integridad) para asegurar que no fue modificado.
+3.  Verifica la **Expiración** (validez temporal).
+4.  Si falla, lanza un error `401 Unauthorized` inmediatamente.
 
-- Funciona con Docker: Cualquier contenedor de nuestra API puede validar el token por su cuenta.
+#### C. Estructura del Token (Claims)
+Diseñamos el payload del token para ser ligero y eficiente:
 
-**2. ¿Cómo funciona nuestro Token?**
-Diseñamos el token para que sea ligero y seguro. Dentro del token (en el payload) guardamos tres datos clave:
+| Claim | Valor | Función |
+| :--- | :--- | :--- |
+| **`sub`** | `admin` | **Identidad:** Identifica al usuario sin consultar la BD. |
+| **`role`** | `admin` | **Autorización:** Define permisos para rutas críticas. |
+| **`exp`** | `+60 min` | **Seguridad:** Ventana de validez limitada para mitigar robos. |
 
-- sub (Sujeto): Quién es el usuario (ej. admin).
+### 4. Conclusión y Trabajo Futuro
+La implementación del Taller 7 ha transformado a EcoMarket de un prototipo funcional a un sistema seguro. Hemos demostrado que es posible proteger una arquitectura distribuida compleja utilizando estándares modernos sin sacrificar escalabilidad.
 
-- role (Rol): Qué permisos tiene. Esto nos sirve para que en el futuro, si entra un usuario "cliente", no pueda borrar productos.
-
-exp (Expiración): Le pusimos 60 minutos de vida. Si alguien roba el token, solo le sirve por un rato.
-
-**3. ¿Qué implementamos en el Código?**
-- Hicimos tres cambios principales en CentralAPI.py para blindar el sistema:
-
-- El "Cadenero" (Middleware): Creamos una función llamada get_current_user que actúa como un filtro. Se pone antes de las funciones críticas (como add_product). Si la petición no trae token o el token es falso, el cadenero la bloquea con un error 401 antes de que toque la base de datos.
-
-- Cifrado de Contraseñas: Ya no guardamos admin123 en texto plano. Usamos una librería llamada Passlib con bcrypt para transformar la contraseña en un hash ilegible. Así, incluso si hackean la base de datos, no sabrán las claves reales.
-
-- Gestión de Secretos: La clave para firmar los tokens (SECRET_KEY) no está escrita en el código (hardcoded). La leemos desde las variables de entorno de Docker.
-
-**4. Riesgos que detectamos y Futuras Mejoras**
-Aunque el sistema es mucho más seguro, somos conscientes de algunos puntos que se pueden mejorar en versiones futuras:
-
-- Almacenamiento del Token: Por ahora, el frontend guarda el token en LocalStorage. Esto es fácil de hacer, pero vulnerable a ataques XSS (si alguien inyecta scripts en la web). La mejora sería usar Cookies HttpOnly.
-
-- HTTPS: Actualmente el token viaja "desnudo" por la red interna. En un entorno real, es obligatorio usar HTTPS (TLS) para que nadie intercepte el token en el camino.
-
-- Revocación: Como el sistema es stateless, es difícil "patear" a un usuario antes de que su token expire. Para la próxima, podríamos usar una "lista negra" en Redis para bloquear tokens robados al instante.
-
-**🏁 Conclusión**
-Con este taller, EcoMarket dejó de ser un sistema ingenuo. Ahora tenemos Autenticación Real. Logramos proteger el inventario maestro asegurando que solo quien tenga las credenciales correctas pueda alterarlo, todo esto sin sacrificar la velocidad ni la escalabilidad de nuestros microservicios.
+**Mejoras Futuras Identificadas:**
+* **Almacenamiento:** Migrar de `LocalStorage` a **Cookies HttpOnly** para prevenir ataques XSS.
+* **Encriptación en Tránsito:** Implementar **HTTPS/TLS** para evitar la interceptación del token en la red (Man-in-the-Middle).
+* **Revocación:** Implementar una lista negra en Redis para invalidar tokens antes de su expiración natural (Logout forzado).
 
 ---
 
-### 2️⃣ **Estructura del Token (Claims)**
+### Anexo: Protocolo de Pruebas (Guion E2E)
+Para validar la implementación, se ejecutó el siguiente flujo (documentado en el video adjunto):
 
-| Claim | Ejemplo | Uso |
-|-------|---------|-----|
-| `sub` | admin | Identifica usuario |
-| `role` | admin | Permisos |
-| `exp` | 1732551234 | Expiración |
-
----
-
-### 3️⃣ **Riesgos y Mitigaciones**
-
-| Riesgo | Mitigación |
-|--------|------------|
-| Robo de identidad | Tokens cortos (60 min) |
-| Acceso no autorizado | Middleware `get_current_user` |
-| Fuga de credenciales | Hash bcrypt |
-| Hardcoding | Variables de entorno |
+- [x] **Verificación de Bloqueo:** Se confirmó que intentar acceder a `/inventory` (método POST) sin token resulta en un bloqueo inmediato (`401`).
+- [x] **Autenticación:** El flujo de Login genera correctamente el token firmado y el cliente lo almacena.
+- [x] **Operación Autorizada:** Con el token en el encabezado, la API permite la modificación del inventario (`200 OK`).
+- [x] **Revocación (Logout):** Al eliminar el token del cliente, el acceso se pierde instantáneamente, confirmando el modelo Stateless.
 
 ---
 
