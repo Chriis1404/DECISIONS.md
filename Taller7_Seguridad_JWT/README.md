@@ -127,6 +127,49 @@ JWT fue elegido sobre sesiones tradicionales porque EcoMarket es un sistema dist
 - **Stateless:** No se guardan sesiones en el servidor.  
 - **Escalable:** Cualquier réplica puede validar tokens solo con la SECRET_KEY.
 
+1. ¿Por qué hicimos esto? (Justificación)
+En los talleres anteriores nos enfocamos en que el sistema escalara y no se cayera, pero teníamos un problema grave: la API Central estaba de puertas abiertas. Cualquiera con Postman podía borrar nuestro inventario o meter datos falsos.
+
+Para solucionar esto en nuestra arquitectura distribuida (donde tenemos varias réplicas de la API y balanceadores de carga), las sesiones tradicionales ("cookies de sesión") no eran viables porque obligan al servidor a recordar al usuario. Si esa instancia del servidor se reinicia, adiós sesión.
+
+Por eso elegimos JWT (JSON Web Tokens).
+
+Es "Stateless" (Sin Estado): El servidor no guarda nada. Toda la información de la sesión viaja dentro del token que tiene el cliente.
+
+Es Rápido: Validar el token es solo una operación matemática (revisar la firma), no hay que ir a preguntar a la base de datos cada vez.
+
+Funciona con Docker: Cualquier contenedor de nuestra API puede validar el token por su cuenta.
+
+2. ¿Cómo funciona nuestro Token?
+Diseñamos el token para que sea ligero y seguro. Dentro del token (en el payload) guardamos tres datos clave:
+
+sub (Sujeto): Quién es el usuario (ej. admin).
+
+role (Rol): Qué permisos tiene. Esto nos sirve para que en el futuro, si entra un usuario "cliente", no pueda borrar productos.
+
+exp (Expiración): Le pusimos 60 minutos de vida. Si alguien roba el token, solo le sirve por un rato.
+
+3. ¿Qué implementamos en el Código?
+Hicimos tres cambios principales en CentralAPI.py para blindar el sistema:
+
+El "Cadenero" (Middleware): Creamos una función llamada get_current_user que actúa como un filtro. Se pone antes de las funciones críticas (como add_product). Si la petición no trae token o el token es falso, el cadenero la bloquea con un error 401 antes de que toque la base de datos.
+
+Cifrado de Contraseñas: Ya no guardamos admin123 en texto plano. Usamos una librería llamada Passlib con bcrypt para transformar la contraseña en un hash ilegible. Así, incluso si hackean la base de datos, no sabrán las claves reales.
+
+Gestión de Secretos: La clave para firmar los tokens (SECRET_KEY) no está escrita en el código (hardcoded). La leemos desde las variables de entorno de Docker.
+
+4. Riesgos que detectamos y Futuras Mejoras
+Aunque el sistema es mucho más seguro, somos conscientes de algunos puntos que se pueden mejorar en versiones futuras:
+
+Almacenamiento del Token: Por ahora, el frontend guarda el token en LocalStorage. Esto es fácil de hacer, pero vulnerable a ataques XSS (si alguien inyecta scripts en la web). La mejora sería usar Cookies HttpOnly.
+
+HTTPS: Actualmente el token viaja "desnudo" por la red interna. En un entorno real, es obligatorio usar HTTPS (TLS) para que nadie intercepte el token en el camino.
+
+Revocación: Como el sistema es stateless, es difícil "patear" a un usuario antes de que su token expire. Para la próxima, podríamos usar una "lista negra" en Redis para bloquear tokens robados al instante.
+
+🏁 Conclusión
+Con este taller, EcoMarket dejó de ser un sistema ingenuo. Ahora tenemos Autenticación Real. Logramos proteger el inventario maestro asegurando que solo quien tenga las credenciales correctas pueda alterarlo, todo esto sin sacrificar la velocidad ni la escalabilidad de nuestros microservicios.
+
 ---
 
 ### 2️⃣ **Estructura del Token (Claims)**
