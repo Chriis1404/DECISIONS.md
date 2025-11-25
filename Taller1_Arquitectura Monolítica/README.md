@@ -52,6 +52,11 @@ Como equipo, diseñamos la interfaz para gestionar el inventario de EcoMarket.
 | `PUT` | `/products/{id}` | Actualizar stock/precio | `200` | `404` |
 | `DELETE`| `/products/{id}` | Eliminar del catálogo | `204` | `404` |
 
+### ⚖️ Dilemas de Diseño Resueltos
+Durante el diseño, el equipo tomó las siguientes decisiones arquitectónicas:
+1.  **PUT en recurso inexistente:** Decidimos devolver `404 Not Found` en lugar de crearlo automáticamente, para evitar inconsistencias de IDs.
+2.  **DELETE idempotente:** Si se intenta borrar un producto que ya no existe, devolvemos `404` para informar al cliente que el recurso ya no está disponible.
+
 ---
 
 ## 💻 **Actividad 3 y 4: Implementación y Robustez**
