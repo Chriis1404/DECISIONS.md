@@ -99,7 +99,7 @@ Video mostrando:
 - Generación del token  
 - Uso de token para gestionar inventario  
 
-👉 *[INSERTAR VIDEO AQUÍ]*
+👉 *[VIDEO AQUÍ](https://drive.google.com/file/d/1rglDS-73Wplc_HEskL_0w5EZZr596S-P/view?usp=sharing)*
 
 ---
 
