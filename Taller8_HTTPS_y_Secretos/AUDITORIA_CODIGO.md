@@ -16,14 +16,14 @@ grep -rn "password\|secret\|key\|token\|api_key" --include="*.py" --include="*.y
 ### 2. Hallazgos (Vulnerabilidades Detectadas)
 
   ------------------------------------------------------------------------------------
-  Archivo              Línea   Contenido Detectado                        Nivel de
+  Archivo       |       Línea  | Contenido Detectado                    |    Nivel de
                                                                           Riesgo
   -------------------- ------- ------------------------------------------ ------------
-  docker-compose.yml   120     POSTGRES_PASSWORD=postgres_pass            🔴 Crítico
+  docker-compose.yml  | 120    | POSTGRES_PASSWORD=postgres_pass          |  🔴 Crítico
 
-  docker-compose.yml   145     RABBITMQ_DEFAULT_PASS=ecomarket_password   🔴 Crítico
+  docker-compose.yml  | 145   |  RABBITMQ_DEFAULT_PASS=ecomarket_password  | 🔴 Crítico
 
-  CentralAPI.py        45      SECRET_KEY = "mi_super_clave_secreta..."   🔴 Crítico
+  CentralAPI.py       | 45   |   SECRET_KEY = "mi_super_clave_secreta..."   |🔴 Crítico
   ------------------------------------------------------------------------------------
 
 ### 3. Plan de Acción
