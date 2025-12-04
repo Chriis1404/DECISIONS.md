@@ -74,6 +74,6 @@ Este repositorio incluye la documentación completa de todas las actividades, re
 ## 🎬 Video de Demostración Final
 Demostración completa del Hito 2: HTTPS, Login Seguro y Manejo de Secretos.
 
-👉 [VER VIDEO AQUÍ]
+👉 [VER VIDEO AQUÍ](https://drive.google.com/file/d/1nJIr0jmzlBhHkmkr-tyZF35jIYJhMnhd/view?usp=sharing)
 
 ---
