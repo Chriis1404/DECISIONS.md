@@ -102,7 +102,9 @@ Credenciales admin:
 
 ## 👥 **Créditos**
 
-- Christofer Roberto Esparza Chavero  
+- **Christofer Roberto Esparza Chavero**
+
+Trabajaron solo el 70% del trabajo
 - Brian Garcia  
 - Juan Cordova  
 
