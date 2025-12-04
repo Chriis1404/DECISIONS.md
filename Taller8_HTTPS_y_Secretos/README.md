@@ -6,7 +6,7 @@
 ### 🛡️ *Hito 2: Despliegue Seguro con HTTPS, JWT y Docker*
 
 📅 **Fecha:** 3 de Diciembre de 2025  
-👤 **Autores:** Christofer Roberto Esparza Chavero, Brian Garcia y Juan Cordova  
+👤 **Autores:** Christofer Roberto Esparza Chavero
 📂 **Estado:** Finalizado (Producción Local)
 
 ---
