@@ -1,81 +1,151 @@
-# 🌿 **EcoMarket: Arquitectura de Sistemas Distribuidos**
+# 🌿 **EcoMarket: Arquitectura de Sistemas Distribuidos Seguros**
 
-![Status](https://img.shields.io/badge/Estado-Finalizado-success)
-![Python](https://img.shields.io/badge/Backend-FastAPI-yellow)
-![Docker](https://img.shields.io/badge/Infra-Docker_Compose-blue)
-![Security](https://img.shields.io/badge/Security-JWT_%2B_HTTPS-red)
+![Status](https://img.shields.io/badge/Estado-Producción_Local-success?style=for-the-badge&logo=docker)
+![Python](https://img.shields.io/badge/Backend-FastAPI-yellow?style=for-the-badge&logo=fastapi&logoColor=black)
+![Security](https://img.shields.io/badge/Security-JWT_%2B_HTTPS-red?style=for-the-badge&logo=letsencrypt&logoColor=white)
+![Infra](https://img.shields.io/badge/Infra-Nginx_%2B_RabbitMQ-blue?style=for-the-badge&logo=nginx)
 
-**EcoMarket** es un proyecto integral de ingeniería de software diseñado para explorar, implementar y asegurar una arquitectura de sistemas distribuidos escalable. A lo largo del semestre, el sistema evolucionó desde un script monolítico hasta una plataforma de microservicios segura y resiliente.
+> **Hito 2 Finalizado:** Transformación completa de un script monolítico
+> a una plataforma de microservicios distribuida, resiliente y blindada
+> con seguridad de grado industrial.
 
----
+------------------------------------------------------------------------
 
-## 🗺️ **Mapa del Proyecto (Evolución Semanal)**
+## 🏗️ **Arquitectura Final del Sistema (Hito 2)**
 
-Este repositorio documenta la transformación técnica del sistema a través de hitos clave. Cada carpeta contiene el código, la documentación y las evidencias correspondientes a esa fase.
+El sistema opera bajo un modelo **Zero-Trust Network** simulado, donde
+el tráfico es cifrado y gestionado por un Gateway seguro.
 
-### 🏗️ **Fase 1: Fundamentos**
-* **[Taller 1: Arquitectura Monolítica](./Taller1_Arquitectura_Monolitica)**
-    * *Objetivo:* Crear la primera API REST básica en memoria.
-    * *Tech:* Python, FastAPI (Sin BD).
-* **[Taller 2: Comunicación de Bajo Nivel](./Taller2_Sockets_TCP_UDP)**
-    * *Objetivo:* Entender cómo viajan los datos implementando Sockets TCP/UDP.
-    * *Tech:* Scripts de Python y C# (.NET).
+``` mermaid
+graph TD
+    User((👤 Cliente)) -->|HTTPS / TLS 1.3| Nginx[🔒 Nginx Gateway<br/>(Puerto 443)]
 
-### 📡 **Fase 2: Distribución y Escalabilidad**
-* **[Taller 3: Arquitectura Distribuida](./Taller3_Arquitectura_Distribuida)**
-    * *Objetivo:* Desacoplar el sistema en Central y Sucursal.
-    * *Logro:* Implementación de **Autonomía Local (Offline-First)** y patrón **Circuit Breaker**.
-* **[Taller 4: Comunicación Asíncrona (Pub/Sub)](./Taller4_Implementacion_Sistema_Distribuido)**
-    * *Objetivo:* Implementar colas de mensajería para desacoplamiento total.
-    * *Tech:* **RabbitMQ** (Fanout Exchange) y **Redis**.
-* **[Taller 5: Alta Disponibilidad](./Taller5_Disponibilidad_Escalabilidad_Balanceo)**
-    * *Objetivo:* Escalar la API Central horizontalmente.
-    * *Tech:* **Nginx** como Balanceador de Carga (Load Balancer).
-* **[Taller 6: Persistencia Distribuida](./Taller6_Distribucion)**
-    * *Objetivo:* Implementar un clúster de base de datos real.
-    * *Tech:* **PostgreSQL** con replicación Maestro-Esclavo.
+    subgraph "Red Privada (Docker Cluster)"
+        Nginx -->|Balanceo| Central[🛡️ Central API<br/>(Cluster)]
 
-### 🛡️ **Fase 3: Seguridad y Blindaje (Hito 2)**
-* **[Taller 7: Autenticación y Autorización](./Taller7_Seguridad_JWT)**
-    * *Objetivo:* Proteger el sistema contra accesos no autorizados.
-    * *Tech:* **JWT (JSON Web Tokens)**, Hashing de contraseñas (`bcrypt`) y Middleware de seguridad.
-* **[Taller 8: HTTPS y Secretos (Final)](./Taller8_HTTPS_y_Secretos)**
-    * *Objetivo:* Cifrar el transporte y proteger la configuración.
-    * *Tech:* **SSL/TLS (HTTPS)** con Nginx y gestión de secretos con `.env` (12-Factor App).
+        Sucursal[🏪 Sucursal Autónoma] -->|AMQP (Ventas)| Rabbit[🐰 RabbitMQ]
+        Sucursal -->|HTTPS (Sync)| Nginx
 
----
+        Central -->|Persistencia| DB[(🐘 PostgreSQL<br/>Replicado)]
+        Central -->|Eventos| Rabbit
 
-## 🚀 **Cómo Ejecutar la Versión Final (Segura)**
+        Env[📄 .env] -.->|Inyección de Secretos| Central
+        Env -.->|Inyección de Secretos| DB
+    end
+```
 
-Para levantar el sistema completo con todas las mejoras de seguridad y distribución:
+------------------------------------------------------------------------
 
-1.  **Clonar el repositorio:**
-    ```bash
-    git clone [https://github.com/Chriis1404/DECISIONS.md.git](https://github.com/Chriis1404/DECISIONS.md.git)
-    cd DECISIONS.md
-    ```
+## 🚀 Servicios Activos y Accesos
 
-2.  **Configurar Secretos:**
-    Copia el archivo de ejemplo para crear tus variables de entorno locales.
-    ```bash
-    cp .env.example .env
-    ```
+  -------------------------------------------------------------------------------
+  Servicio        URL de Acceso                 Descripción Técnica
+  --------------- ----------------------------- ---------------------------------
+  🔒 Secure       https://localhost             Punto de entrada único. Maneja
+  Gateway                                       Terminación SSL y redirige
+                                                tráfico HTTP a HTTPS.
 
-3.  **Desplegar con Docker Compose:**
-    ```bash
-    docker-compose up -d --build
-    ```
+  🛡️ Central      https://localhost/dashboard   Panel administrativo protegido
+  Dashboard                                     por JWT. Gestiona el inventario
+                                                maestro.
 
-4.  **Acceder al Sistema:**
-    * **Dashboard Seguro:** `https://localhost` (Acepta el certificado autofirmado).
-    * **Credenciales Admin:** Usuario: `admin` / Contraseña: `admin123`.
+  🏪 Sucursal     http://localhost:8002         Nodo cliente autónomo
+  Demo                                          (Offline-First). Simula ventas y
+                                                sincronización asíncrona.
 
----
+  🐰 RabbitMQ     http://localhost:15672        Broker de mensajería. User:
+  Admin                                         ecomarket_user / Pass:
+                                                ecomarket_password
 
-## 👥 **Equipo de Desarrollo**
-* **Christofer Roberto Esparza Chavero**
-* Brian Garcia
-* Juan Cordova
+  📚              https://localhost/docs        Swagger UI automático generado
+  Documentación                                 por FastAPI.
+  API                                           
+  -------------------------------------------------------------------------------
 
----
-*Proyecto desarrollado para la materia de Programación del Lado del Servidor - 2025.*
+------------------------------------------------------------------------
+
+## 🛠️ Guía de Despliegue Rápido
+
+El proyecto implementa la metodología **12-Factor App**, por lo que la
+configuración está externalizada.
+
+### 1. Configuración de Secretos
+
+Crea un archivo `.env` en la raíz basado en la plantilla segura:
+
+``` bash
+cp .env.example .env
+# (Opcional) Edita .env con tus propias claves si lo deseas
+```
+
+### 2. Despliegue con Docker
+
+Construye y levanta la infraestructura completa:
+
+``` bash
+docker-compose up -d --build
+```
+
+### 3. Validación
+
+-   Accede a `http://localhost` → El navegador te redirigirá a HTTPS.
+-   Acepta el certificado autofirmado (generado para desarrollo local).
+-   Credenciales Admin:\
+    Usuario: **admin**\
+    Contraseña: **admin123**
+
+------------------------------------------------------------------------
+
+## 🗺️ Hoja de Ruta: Evolución del Proyecto
+
+Este repositorio documenta la historia técnica de EcoMarket a través de
+8 talleres intensivos.
+
+### 🟢 Fase 1: Fundamentos (Monolito)
+
+-   Taller 1: Arquitectura Monolítica - API básica en memoria.
+-   Taller 2: Sockets TCP/UDP - Comunicación de bajo nivel.
+
+### 🟡 Fase 2: Distribución (Escalabilidad)
+
+-   Taller 3: Arquitectura Distribuida - Separación Cliente-Servidor y
+    Circuit Breaker.
+-   Taller 4: Sistema de Eventos (Pub/Sub) - Desacoplamiento con
+    RabbitMQ y Redis.
+-   Taller 5: Alta Disponibilidad - Balanceo de carga con Nginx.
+-   Taller 6: Persistencia Distribuida - Clúster de Base de Datos
+    PostgreSQL.
+
+### 🔴 Fase 3: Seguridad (Blindaje Final)
+
+-   Taller 7: Autenticación JWT - Identidad Stateless y Hashing.
+-   Taller 8: HTTPS y Secretos - Cifrado de transporte y gestión de
+    configuración.
+
+------------------------------------------------------------------------
+
+## 🛡️ Auditoría de Seguridad (Hito 2)
+
+El sistema cumple con los pilares de la **Tríada CIA**:
+
+-   **Confidencialidad:** Tráfico 100% cifrado vía TLS 1.3. Secretos
+    fuera del código fuente.
+-   **Integridad:** Tokens JWT firmados (HS256) y contraseñas hasheadas
+    (bcrypt).
+-   **Disponibilidad:** Arquitectura redundante capaz de soportar la
+    caída de contenedores individuales.
+
+➡️ Ver Informe Técnico Completo y Auditoría
+
+------------------------------------------------------------------------
+
+## 👥 Créditos
+
+Desarrollado por el equipo de Ingeniería de Software:
+
+-   Christofer Roberto Esparza Chavero\
+-   Brian Garcia\
+-   Juan Cordova
+
+Proyecto para la asignatura de **Programación del Lado del Servidor -
+2025**.
