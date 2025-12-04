@@ -1,24 +1,19 @@
-# 🌿 EcoMarket --- Arquitectura de Sistemas Distribuidos Seguros
+# 🌿 **EcoMarket: Arquitectura de Sistemas Distribuidos Seguros**
 
 ![Status](https://img.shields.io/badge/Estado-Producción_Local-success?style=for-the-badge&logo=docker)
 ![Python](https://img.shields.io/badge/Backend-FastAPI-yellow?style=for-the-badge&logo=fastapi&logoColor=black)
 ![Security](https://img.shields.io/badge/Security-JWT_%2B_HTTPS-red?style=for-the-badge&logo=letsencrypt&logoColor=white)
 ![Infra](https://img.shields.io/badge/Infra-Nginx_%2B_RabbitMQ-blue?style=for-the-badge&logo=nginx)
 
-> ✅ **Hito 2 Finalizado**\
-> Transformación completa de un script monolítico a una **plataforma de
-> microservicios distribuida, resiliente y blindada con seguridad de
-> grado industrial**.
+> **Hito 2 Finalizado:** Transformación completa de un script monolítico a una plataforma de microservicios distribuida, resiliente y blindada con seguridad de grado industrial.
 
-------------------------------------------------------------------------
+---
 
-## 🏗️ Arquitectura Final del Sistema (Hito 2)
+## 🏗️ **Arquitectura Final del Sistema (Hito 2)**
 
-El sistema opera bajo un modelo **Zero-Trust Network** simulado, donde
-todo el tráfico es **cifrado, validado y controlado** por un Gateway
-seguro.
+El sistema opera bajo un modelo **Zero-Trust Network**, donde todo el tráfico es cifrado y gestionado por un Gateway seguro.
 
-``` mermaid
+```mermaid
 graph TD
     User((👤 Cliente)) -->|HTTPS / TLS 1.3| Nginx[🔒 Nginx Gateway<br/>(Puerto 443)]
 
@@ -36,105 +31,79 @@ graph TD
     end
 ```
 
-------------------------------------------------------------------------
+---
 
-## 🚀 Servicios Activos y Accesos
+## 🚀 **Servicios Activos y Accesos**
 
-  ---------------------------------------------------------------------------------
-  Servicio          URL de Acceso                 Descripción Técnica
-  ----------------- ----------------------------- ---------------------------------
-  🔒 **Secure       https://localhost             Punto de entrada único. Maneja
-  Gateway**                                       terminación SSL y redirige
-                                                  tráfico HTTP a HTTPS
+| Servicio | URL de Acceso | Descripción Técnica |
+|---------|---------------|---------------------|
+| 🔒 **Secure Gateway** | https://localhost | Punto de entrada único. Terminación SSL + redirección automática. |
+| 🛡️ **Central Dashboard** | https://localhost/dashboard | Panel administrativo protegido por JWT. |
+| 🏪 **Sucursal Demo** | http://localhost:8002 | Nodo autónomo Offline‑First para ventas. |
+| 🐰 **RabbitMQ Admin** | http://localhost:15672 | User: ecomarket_user / Pass: ecomarket_password |
+| 📚 **Documentación API** | https://localhost/docs | Swagger UI generado por FastAPI. |
 
-  🛡️ **Central      https://localhost/dashboard   Panel administrativo protegido
-  Dashboard**                                     por JWT. Gestiona el inventario
-                                                  maestro
+---
 
-  🏪 **Sucursal     http://localhost:8002         Nodo autónomo (Offline-First).
-  Demo**                                          Simula ventas y sincronización
-                                                  asíncrona
+## 🛠️ **Guía de Despliegue Rápido**
 
-  🐰 **RabbitMQ     http://localhost:15672        Broker de mensajería --- User:
-  Admin**                                         `ecomarket_user` / Pass:
-                                                  `ecomarket_password`
+### **1. Configuración de Secretos**
 
-  📚                https://localhost/docs        Swagger UI generado
-  **Documentación                                 automáticamente con FastAPI
-  API**                                           
-  ---------------------------------------------------------------------------------
-
-------------------------------------------------------------------------
-
-## 🛠️ Guía de Despliegue Rápido
-
-EcoMarket implementa la metodología **12-Factor App**, manteniendo toda
-la configuración externalizada.
-
-### 1️⃣ Configuración de secretos
-
-Crea el archivo `.env` en la raíz del proyecto:
-
-``` bash
+```bash
 cp .env.example .env
-# (Opcional) Edita el .env con tus propias claves
 ```
 
-### 2️⃣ Despliegue con Docker
+---
 
-Construye y levanta todo el ecosistema:
+### **2. Despliegue con Docker**
 
-``` bash
+```bash
 docker-compose up -d --build
 ```
 
-### 3️⃣ Validación
+---
 
--   Ingresa a `http://localhost` → serás redirigido automáticamente a
-    HTTPS\
--   Acepta el certificado autofirmado (válido en entorno local)
+### **3. Validación**
 
-**Credenciales admin:**\
-Usuario: **admin**\
-Contraseña: **admin123**
+Accede a: **http://localhost** → Redirige a **HTTPS**.
 
-------------------------------------------------------------------------
+Credenciales admin:
 
-## 🗺️ Hoja de Ruta --- Evolución del Proyecto
+- Usuario: **admin**  
+- Contraseña: **admin123**
 
-### 🟢 Fase 1 --- Fundamentos (Monolito)
+---
 
--   Taller 1: Arquitectura Monolítica\
--   Taller 2: Sockets TCP/UDP
+## 🗺️ **Hoja de Ruta: Evolución del Proyecto**
 
-### 🟡 Fase 2 --- Distribución
+### 🟢 Fase 1: Fundamentos
+- Taller 1: Arquitectura Monolítica  
+- Taller 2: Sockets TCP/UDP  
 
--   Taller 3: Arquitectura Distribuida\
--   Taller 4: Sistema de Eventos (Pub/Sub)\
--   Taller 5: Alta Disponibilidad\
--   Taller 6: Persistencia Distribuida
+### 🟡 Fase 2: Distribución
+- Taller 3: Arquitectura Distribuida  
+- Taller 4: Pub/Sub con RabbitMQ  
+- Taller 5: Balanceo con Nginx  
+- Taller 6: PostgreSQL Distribuido  
 
-### 🔴 Fase 3 --- Seguridad
+### 🔴 Fase 3: Seguridad
+- Taller 7: JWT + Hashing  
+- Taller 8: HTTPS + Secretos  
 
--   Taller 7: Autenticación JWT\
--   Taller 8: HTTPS y Secretos
+---
 
-------------------------------------------------------------------------
+## 🛡️ **Auditoría de Seguridad (Hito 2)**
 
-## 🛡️ Auditoría de Seguridad
+- Confidencialidad: TLS 1.3 + secretos fuera del código  
+- Integridad: JWT firmados + bcrypt  
+- Disponibilidad: Infra redundante  
 
-El sistema cumple con la **Tríada CIA**:
+---
 
--   **Confidencialidad** --- TLS 1.3, secretos fuera del código\
--   **Integridad** --- JWT HS256, bcrypt\
--   **Disponibilidad** --- Arquitectura tolerante a fallos
+## 👥 **Créditos**
 
-------------------------------------------------------------------------
+- Christofer Roberto Esparza Chavero  
+- Brian Garcia  
+- Juan Cordova  
 
-## 👥 Créditos
-
--   Christofer Roberto Esparza Chavero\
--   Brian Garcia\
--   Juan Cordova
-
-Proyecto académico --- **Programación del Lado del Servidor 2025**
+Proyecto — Programación del Lado del Servidor 2025
