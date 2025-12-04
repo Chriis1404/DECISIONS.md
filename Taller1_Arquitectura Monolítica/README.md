@@ -130,7 +130,7 @@ Pensando en una escala real (10,000 productos), el equipo propuso:
 > — Equipo de Desarrollo EcoMarket
 
 # 📂 Código Fuente
-- [main.py](/https://github.com/Chriis1404/DECISIONS.md/blob/main/Taller1_Arquitectura%20Monol%C3%ADtica/main.py)
+- [main.py](https://github.com/Chriis1404/DECISIONS.md/blob/main/Taller1_Arquitectura%20Monol%C3%ADtica/main.py)
 ---
 
 ### 🎯 Estado del Taller: **✅ Completado**
