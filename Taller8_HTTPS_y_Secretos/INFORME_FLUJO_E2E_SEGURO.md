@@ -52,8 +52,26 @@ sequenceDiagram
   Datos             Robo de Base de Datos    Hashing bcrypt para contraseñas
 
   Infraestructura   Fuga de Código Fuente    Variables de entorno (.env)
-  --------------------------------------------------------------------------
 
+  --------------------------------------------------------------------------
+## 2. Análisis de Seguridad: Capas de Protección y Fallos
+
+Documentación del análisis de riesgo residual para cada componente de seguridad implementado.
+
+### 🔒 ¿Qué protege HTTPS (TLS 1.3)?
+* **Función:** Garantiza la **Confidencialidad** e **Integridad** de los datos en tránsito. Cifra todo el tráfico entre el cliente y Nginx.
+* **¿Qué pasa si falla? (Riesgo):** Si el certificado expira o se deshabilita TLS, el tráfico viaja en texto plano. Un atacante en la misma red (WiFi pública) podría realizar un ataque *Man-in-the-Middle (MITM)* y leer las contraseñas de login o robar el Token JWT para suplantar la sesión.
+
+### 🔑 ¿Qué protege JWT (JSON Web Token)?
+* **Función:** Garantiza la **Identidad** (Autenticación) y **Autorización** del usuario de forma *stateless*. Asegura que quien hace la petición es quien dice ser y tiene los permisos (roles) adecuados.
+* **¿Qué pasa si falla? (Riesgo):** Si la validación de firma falla o el secreto es débil, un atacante podría forjar tokens falsos y acceder como administrador (`role: admin`) sin conocer la contraseña, comprometiendo toda la plataforma.
+
+### 📄 ¿Qué protege el archivo .env?
+* **Función:** Mantiene los **Secretos** (contraseñas de BD, llaves JWT) fuera del código fuente, siguiendo la metodología *12-Factor App*.
+* **¿Qué pasa si falla? (Riesgo):** Si el archivo `.env` se sube al repositorio por error (fallo en `.gitignore`), las credenciales quedan expuestas permanentemente en el historial de Git. Cualquier persona con acceso al repo tendría acceso total a la base de datos y podría generar tokens válidos.
+
+---
+*Validación del flujo E2E para el Hito 2.*
 ------------------------------------------------------------------------
 
 Validación del **Hito 2**.
