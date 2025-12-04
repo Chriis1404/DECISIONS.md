@@ -1,0 +1,1687 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EcoMarket: Seguridad en Sistemas Distribuidos - HTTPS y Gestión de Secretos</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        h1, h2, h3 { color: #2c3e50; }
+        h1 {
+            text-align: center;
+            border-bottom: 3px solid #17a2b8;
+            padding-bottom: 10px;
+        }
+        .phase {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .phase h2 {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .phase h2::before {
+            content: attr(data-icon);
+            font-size: 1.5em;
+            margin-right: 10px;
+        }
+        .activity {
+            background: #e8f4fd;
+            border-left: 4px solid #17a2b8;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .checkpoint {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .code-block {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 15px;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            line-height: 1.4;
+        }
+        .code-block pre { margin: 0; white-space: pre-wrap; }
+        .code-python { border-left: 4px solid #3572A5; }
+        .code-csharp { border-left: 4px solid #9B4F96; }
+        .code-bash { background: #2d3436; color: #dfe6e9; border-left: 4px solid #636e72; }
+        .code-docker { border-left: 4px solid #0db7ed; }
+        ul { padding-left: 20px; }
+        li { margin: 5px 0; }
+        .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 15px 0; border-radius: 5px; }
+        .danger { background: #ffe6e6; border-left: 4px solid #e74c3c; padding: 15px; margin: 15px 0; border-radius: 5px; }
+        .tip { background: #d1ecf1; border-left: 4px solid #17a2b8; padding: 15px; margin: 15px 0; border-radius: 5px; }
+        .reflection { background: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 15px 0; border-radius: 5px; }
+        .ai-prompt { background: #e8f5e8; border-left: 4px solid #28a745; padding: 15px; margin: 15px 0; border-radius: 5px; font-family: monospace; font-size: 0.9em; }
+        .ai-challenge { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; margin: 20px 0; border-radius: 10px; }
+        .ai-challenge h3 { color: white; margin-top: 0; }
+        .ai-challenge pre { background: rgba(255,255,255,0.15); padding: 15px; border-radius: 5px; white-space: pre-wrap; }
+        .progress-bar { display: flex; justify-content: space-between; margin: 20px 0; flex-wrap: wrap; }
+        .progress-item { flex: 1; text-align: center; padding: 10px; background: #e9ecef; margin: 5px; border-radius: 5px; min-width: 120px; }
+        .progress-item.active { background: #17a2b8; color: white; }
+        .scenario-box { background: #f0f8ff; border: 1px solid #17a2b8; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .diagram { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 5px; padding: 15px; margin: 10px 0; white-space: pre; font-family: 'Courier New', monospace; font-size: 0.85em; overflow-x: auto; }
+        .comparison-table { width: 100%; border-collapse: collapse; margin: 10px 0; background: white; }
+        .comparison-table th, .comparison-table td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        .comparison-table th { background-color: #f2f2f2; font-weight: bold; }
+        .comparison-table tr:nth-child(even) { background-color: #f9f9f9; }
+        .dual-lang { display: flex; gap: 20px; }
+        .dual-lang > div { flex: 1; }
+        @media (max-width: 768px) { .dual-lang { flex-direction: column; } }
+        footer p { text-align: center; font-size: 1.2em; color: #28a745; }
+        .glossary { background: #f8f9fa; padding: 15px; margin: 20px 0; border-radius: 5px; }
+        .glossary dl { margin: 0; }
+        .glossary dt { font-weight: bold; margin-top: 10px; color: #17a2b8; }
+        .glossary dd { margin-left: 0; margin-bottom: 10px; }
+        .deep-questions { background: #fff5f5; border: 2px dashed #dc3545; padding: 20px; margin: 20px 0; border-radius: 10px; }
+        .deep-questions h3 { color: #dc3545; margin-top: 0; }
+        .layer-security { background: linear-gradient(to right, #e8f5e8, #d1ecf1, #fff3cd); padding: 15px; border-radius: 10px; margin: 15px 0; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({ startOnLoad: true, theme: 'default' });</script>
+</head>
+<body>
+    <!-- Contexto del Curso -->
+    <div style="background: linear-gradient(135deg, #17a2b8 0%, #138496 100%); color: white; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+            <div>
+                <h3 style="margin: 0; color: white;"><span role="img" aria-label="calendario">📅</span> Semana 9 | Unidad IV: Comunicación Segura (Parte 2)</h3>
+                <p style="margin: 5px 0 0 0; opacity: 0.9;">Taller 8: Configurar HTTPS y Gestión de Secretos</p>
+            </div>
+            <div style="text-align: right;">
+                <p style="margin: 0; font-size: 0.9em; opacity: 0.9;">Duración: 4 horas</p>
+                <p style="margin: 5px 0 0 0; font-size: 0.9em; opacity: 0.9; font-weight: bold;">Entrega Final: Hito 2 (15%)</p>
+            </div>
+        </div>
+    </div>
+
+    <h1>EcoMarket: Endureciendo la Seguridad - Cifrado y Secretos</h1>
+    <p>De credenciales expuestas y texto plano a una infraestructura segura con HTTPS/TLS y variables de entorno protegidas.</p>
+
+    <!-- Conexión Explícita con Semana 8 -->
+    <div class="layer-security">
+        <h3><span role="img" aria-label="enlace">🔗</span> Conexión con Semana 8: Las Tres Capas de Seguridad</h3>
+        <div class="mermaid" role="img" aria-label="Diagrama de flujo mostrando las tres capas de seguridad: JWT para identidad en Semana 8, HTTPS/TLS para canal cifrado y Secretos para configuración protegida en Semana 9">
+graph TB
+    subgraph "Semana 8: IDENTIDAD"
+        JWT[🎫 JWT - ¿Quién eres?]
+    end
+    subgraph "Semana 9: TRANSPORTE + CONFIG"
+        HTTPS[🔒 HTTPS/TLS - Canal Cifrado]
+        SECRETS[🔑 Secretos - Config Protegida]
+    end
+    JWT --> HTTPS
+    HTTPS --> SECRETS
+    style JWT fill:#e74c3c,color:white
+    style HTTPS fill:#17a2b8,color:white
+    style SECRETS fill:#28a745,color:white
+        </div>
+        <p><strong>Analogía:</strong> JWT es tu credencial de empleado (identidad), HTTPS es el sobre sellado que la transporta (confidencialidad), y la gestión de secretos es la caja fuerte donde guardas las llaves maestras (configuración segura).</p>
+    </div>
+
+    <!-- Sección de Introducción -->
+    <section id="introduccion" style="background: #f0f8ff; border-radius: 10px; padding: 20px; margin: 20px 0;">
+        <h2><span role="img" aria-label="diana objetivo">🎯</span> Al Final de Esta Semana (Cierre de Unidad IV), Serás Capaz De:</h2>
+        <div class="checkpoint">
+            <ul>
+                <li>✅ <strong>Implementar</strong> comunicaciones cifradas (HTTPS) utilizando certificados (self-signed para desarrollo). <em>[Nivel: Aplicar]</em></li>
+                <li>✅ <strong>Externalizar</strong> secretos y credenciales (DB Strings, API Keys, JWT Secrets) fuera del código fuente. <em>[Nivel: Aplicar]</em></li>
+                <li>✅ <strong>Analizar</strong> la diferencia entre autenticación (JWT - Semana 8) y canal seguro (TLS - Semana 9), identificando vectores de ataque como MITM. <em>[Nivel: Analizar]</em></li>
+                <li>✅ <strong>Configurar</strong> un servidor web (como Nginx) o el servidor de aplicaciones para terminación SSL, con renovación automática. <em>[Nivel: Aplicar]</em></li>
+                <li>✅ <strong>Evaluar</strong> trade-offs entre diferentes estrategias de gestión de certificados y secretos. <em>[Nivel: Evaluar]</em></li>
+                <li>✅ <strong>Diseñar</strong> una estrategia personalizada de seguridad para tu arquitectura distribuida. <em>[Nivel: Crear]</em></li>
+                <li>✅ <strong>Entregar</strong> el Hito 2: Servicios con Seguridad (JWT + HTTPS + Secretos).</li>
+            </ul>
+        </div>
+
+        <h2><span role="img" aria-label="libros">📚</span> Lecturas / Estudio Independiente (Antes del Taller 8)</h2>
+        <p>Dedica 30–45 minutos a los siguientes conceptos clave:</p>
+        <ul>
+            <li><strong>The Twelve-Factor App (Config):</strong> Por qué la configuración debe estar en el entorno y no en el código (Heroku Manifesto).</li>
+            <li><strong>TLS/SSL Handshake:</strong> Cómo se establece una conexión segura (llave pública vs. privada; lee RFC 8446 para TLS 1.3).</li>
+            <li>Documentación de <code>python-dotenv</code> o <code>User Secrets</code> en .NET; OWASP Cheat Sheet para Secrets Management.</li>
+        </ul>
+
+        <!-- Escenario Inicial Inmersivo -->
+        <div class="danger">
+            <h3><span role="img" aria-label="sirena de alerta">🚨</span> Escenario de Brecha Real: Inspirado en Equifax (2017)</h3>
+            <p>Imagina: EcoMarket crece, pero un empleado sube credenciales DB a GitHub. Un atacante las usa para inyectar SQL vía HTTP no cifrado. Resultado: 147M usuarios expuestos, $1.4B en multas. <strong>Tu misión: Evitar esto en EcoMarket.</strong></p>
+        </div>
+
+        <!-- RETO IA #1: Diagnóstico Inicial -->
+        <div class="ai-challenge">
+            <h3><span role="img" aria-label="robot">🤖</span> Reto IA #1: Diagnóstico de Vulnerabilidades (Antes de Empezar)</h3>
+            <p>Usa este prompt para evaluar tu estado actual de seguridad:</p>
+            <pre>Actúa como un auditor de seguridad senior. Voy a describir mi arquitectura actual de EcoMarket:
+
+- Backend: [Python/FastAPI o C#/.NET]
+- Base de datos: [PostgreSQL/MySQL/MongoDB]
+- Autenticación: JWT implementado en Semana 8
+- Despliegue: [Local/Docker/Cloud]
+- Almacenamiento de secretos: [Describe cómo guardas contraseñas y claves actualmente]
+
+Genera un informe de vulnerabilidades con:
+1. Lista de riesgos críticos (🔴), medios (🟡), y bajos (🟢)
+2. Para cada riesgo, explica el vector de ataque específico
+3. Priorización: ¿Qué debo arreglar primero y por qué?
+4. Métricas: ¿Cómo sabré que lo arreglé correctamente?
+
+Sé específico para mi stack tecnológico.</pre>
+            <p><strong>📝 Entregable:</strong> Guarda el informe generado. Lo compararás con tu estado final al terminar la semana.</p>
+        </div>
+
+        <h2><span role="img" aria-label="herramientas">🛠️</span> Taller 8: HTTPS y Secretos en EcoMarket</h2>
+        <p><strong>Objetivo del Taller:</strong> Finalizar la seguridad de EcoMarket asegurando que (1) los datos viajen cifrados y (2) las claves del servidor no estén expuestas en el repositorio. Integra con JWT de Semana 8: ahora, tokens viajan seguros.</p>
+
+        <ol>
+            <li><strong>Auditoría de Secretos (20 min):</strong> Identificar y remover cualquier contraseña hardcodeada (usa <code>grep -r "password\|secret" .</code>).</li>
+            <li><strong>Implementación de .env (40 min):</strong> Configurar la carga de variables de entorno, rotación de claves.</li>
+            <li><strong>Generación de Certificados (30 min):</strong> Crear certificados SSL locales (mkcert/openssl) y simular renovación.</li>
+            <li><strong>Habilitar HTTPS (70 min):</strong> Configurar el servidor; prueba E2E con Postman (incluye redirección HTTP→HTTPS).</li>
+        </ol>
+
+        <div class="tip">
+            <h3><span role="img" aria-label="candado cerrado">🔐</span> ¿Por qué JWT no es suficiente? (Conexión Explícita con Semana 8)</h3>
+            <p>En Semana 8, JWT autentica "quién eres". Pero sin HTTPS, un MITM (Man-in-the-Middle) intercepta el token en tránsito (e.g., WiFi público). <strong>HTTPS cifra el canal entero: confidencialidad + integridad.</strong></p>
+            <div class="diagram">
+┌─────────────────────────────────────────────────────────────────────┐
+│                    ¿QUÉ PROTEGE CADA CAPA?                          │
+├─────────────────────────────────────────────────────────────────────┤
+│  CAPA          │  PROTEGE                │  NO PROTEGE              │
+├─────────────────────────────────────────────────────────────────────┤
+│  JWT           │  Identidad del usuario  │  Datos en tránsito       │
+│  (Semana 8)    │  Autorización (roles)   │  Robo de token           │
+│                │  Integridad del claim   │  Secreto si se filtra    │
+├─────────────────────────────────────────────────────────────────────┤
+│  HTTPS/TLS     │  Confidencialidad       │  Identidad del usuario   │
+│  (Semana 9)    │  Integridad en tránsito │  Autorización            │
+│                │  Autenticidad servidor  │  Secretos en código      │
+├─────────────────────────────────────────────────────────────────────┤
+│  Gestión de    │  Secretos fuera de Git  │  Datos en tránsito       │
+│  Secretos      │  Rotación de claves     │  Identidad               │
+│  (Semana 9)    │  Auditoría de acceso    │  Vulnerabilidades código │
+└─────────────────────────────────────────────────────────────────────┘
+            </div>
+        </div>
+
+        <!-- Rúbrica para Hito 2 -->
+        <div style="background: linear-gradient(135deg, #28a745 0%, #218838 100%); color: white; padding: 20px; border-radius: 10px; margin: 20px 0;">
+            <h3 style="margin-top: 0; color: white;"><span role="img" aria-label="trofeo">🏆</span> Rúbrica de Evaluación - Hito 2 (15% Total)</h3>
+            <table class="comparison-table" style="color: #333;">
+                <thead>
+                    <tr>
+                        <th>Componente</th>
+                        <th>Peso</th>
+                        <th>Criterios de Aceptación</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Autenticación JWT (Semana 8)</td>
+                        <td>5%</td>
+                        <td>Login funcional, middleware protege ≥3 endpoints, claims seguros, refresh tokens.</td>
+                    </tr>
+                    <tr>
+                        <td>Gestión de Secretos</td>
+                        <td>4%</td>
+                        <td>No hardcode; .env/UserSecrets; rotación simulada; .gitignore correcto; .env.example presente.</td>
+                    </tr>
+                    <tr>
+                        <td>HTTPS/TLS</td>
+                        <td>4%</td>
+                        <td>Servidor en puerto seguro; redirección HTTP→HTTPS; verificación en browser/Postman; certificado válido.</td>
+                    </tr>
+                    <tr>
+                        <td>Documentación & Demo</td>
+                        <td>2%</td>
+                        <td>README con setup; video 2-min E2E; informe con justificación técnica.</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p style="opacity: 0.9; margin-bottom: 0;">Máximo: 15%. Bonos: +1% por Docker HTTPS; +1% por auditoría con IA documentada.</p>
+        </div>
+    </section>
+
+    <div class="progress-bar">
+        <div class="progress-item active">🏴‍☠️ Fase 0: La Amenaza</div>
+        <div class="progress-item">🔑 Fase 1: Secretos</div>
+        <div class="progress-item">🔒 Fase 2: HTTPS</div>
+        <div class="progress-item">🚀 Fase 3: Producción</div>
+        <div class="progress-item">📝 Integración</div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- FASE 0: EL PROBLEMA -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="phase">
+        <h2 data-icon="🏴‍☠️" aria-label="Bandera pirata - Fase 0: El Problema de la Red Abierta y GitHub">Fase 0: El Problema de la Red Abierta y GitHub (30 min)</h2>
+        
+        <div class="scenario-box">
+            <h3><span role="img" aria-label="planta">🪴</span> Escenario: La Filtración de EcoMarket</h3>
+            <p>Acabas de implementar JWT (Semana 8). ¡Genial! Pero: Subiste <code>config.py</code> con <code>JWT_SECRET = "mi_secreto_super_seguro"</code> a GitHub. Tu API en <code>http://api.ecomarket.com</code>.</p>
+            <p><strong>Consecuencias:</strong></p>
+            <ul>
+                <li>🤖 Bot en GitHub detecta la clave → genera tokens falsos en minutos</li>
+                <li>☕ Usuario en WiFi de cafetería → token robado vía sniffer</li>
+                <li>💰 Atacante accede a datos de clientes → multas GDPR hasta 4% de ingresos anuales</li>
+            </ul>
+        </div>
+
+        <div class="diagram">
+            <div class="mermaid" role="img" aria-label="Diagrama de secuencia mostrando un ataque Man-in-the-Middle donde un hacker intercepta credenciales y tokens JWT en una conexión HTTP no cifrada">
+sequenceDiagram
+    participant C as 👤 Cliente (Cafetería WiFi)
+    participant H as 🏴‍☠️ Hacker (Sniffer)
+    participant S as 🖥️ Servidor (HTTP)
+    
+    Note over C,S: ⚠️ TRÁFICO EN TEXTO PLANO (HTTP)
+    
+    C->>S: POST /login {user: "ana", pass: "123456"}
+    H-->>C: 👁️ Intercepta credenciales en claro
+    S-->>C: 200 OK {token: "eyJhbGciOiJIUzI1NiIs..."}
+    H-->>S: 👁️ Copia el JWT
+    
+    Note over H: 🎭 Ahora el Hacker ES Ana
+    
+    H->>S: GET /mis-ordenes (Authorization: Bearer eyJ...)
+    S-->>H: 200 OK [{orden: "TV 65 pulgadas", direccion: "Calle Real 123"}]
+    
+    Note over H: 💳 Tiene acceso a historial, direcciones, métodos de pago
+            </div>
+        </div>
+        <p style="text-align: center;"><em>Ataque MITM (Man-in-the-Middle) en conexiones no cifradas.</em></p>
+
+        <div class="activity">
+            <h3><span role="img" aria-label="detective">🕵️</span> Actividad: Auditoría de Código (Nivel: Analizar)</h3>
+            <p>Revisa tu repositorio de EcoMarket:</p>
+            <ol>
+                <li><strong>Búsqueda local:</strong> Ejecuta en tu terminal:
+                    <div class="code-block code-bash">
+<pre># Buscar secretos potenciales
+grep -rn "password\|secret\|key\|token\|api_key" --include="*.py" --include="*.cs" --include="*.json" .
+
+# Buscar strings de conexión
+grep -rn "mongodb://\|postgresql://\|mysql://\|Server=" .</pre>
+                    </div>
+                </li>
+                <li><strong>Simulación de brecha:</strong> Por cada secreto encontrado, documenta:
+                    <ul>
+                        <li>¿Qué acceso obtendría un atacante?</li>
+                        <li>¿Cuántos usuarios afectados?</li>
+                        <li>¿Costo estimado de la brecha?</li>
+                    </ul>
+                </li>
+                <li><strong>Investigación real:</strong> Busca en GitHub: <code>"JWT_SECRET" language:python</code> — observa cuántos repos exponen secretos reales.</li>
+            </ol>
+        </div>
+
+        <!-- Checkpoint Fase 0 -->
+        <div class="checkpoint">
+            <h3><span role="img" aria-label="marca de verificación">✅</span> Checkpoint Fase 0</h3>
+            <ul>
+                <li>☐ Identifiqué al menos 2 secretos hardcodeados en mi código</li>
+                <li>☐ Documenté el impacto potencial de cada filtración</li>
+                <li>☐ Entiendo la diferencia entre ataque MITM y robo de credenciales en GitHub</li>
+            </ul>
+        </div>
+
+        <!-- PAUSA IA: Después de Fase 0 -->
+        <div class="ai-challenge">
+            <h3><span role="img" aria-label="robot">🤖</span> Reto IA #2: Simulación de Ataque MITM</h3>
+            <p>Profundiza tu comprensión del problema antes de implementar la solución:</p>
+            <pre>Simula que eres un pentester ético contratado para auditar EcoMarket. 
+
+Contexto:
+- API REST en http://api.ecomarket.com (sin HTTPS)
+- Autenticación JWT implementada
+- Base de datos PostgreSQL con datos de 50,000 usuarios
+- Endpoints: /login, /productos, /ordenes, /usuarios/perfil
+
+Genera:
+1. **Plan de ataque detallado** usando técnicas MITM (ARP spoofing, DNS spoofing, WiFi evil twin)
+2. **Herramientas específicas** que usarías (Wireshark, Bettercap, mitmproxy)
+3. **Secuencia de comandos** para capturar un token JWT
+4. **Qué datos extraerías** una vez comprometido
+5. **Timeline estimado** desde inicio hasta exfiltración completa
+
+Sé técnicamente preciso. Esto es para entender qué debo defender.</pre>
+            <p><strong>📝 Reflexión:</strong> Después de ver el plan de ataque, ¿qué tan vulnerable te sientes? Anota 3 cosas que no habías considerado.</p>
+        </div>
+
+        <!-- Preguntas de Profundización Fase 0 -->
+        <div class="deep-questions">
+            <h3><span role="img" aria-label="pensando">🤔</span> Preguntas para Profundizar (Fase 0)</h3>
+            <ol>
+                <li>Si un atacante obtiene tu JWT_SECRET de GitHub, ¿puede generar tokens para usuarios que nunca han hecho login? ¿Por qué?</li>
+                <li>¿Por qué un JWT robado es más peligroso que una sesión tradicional robada?</li>
+                <li>¿Qué diferencia hay entre que te roben el token en tránsito vs. que te roben el secreto del servidor?</li>
+                <li>Si implementas HTTPS pero tu JWT_SECRET está en GitHub, ¿sigues vulnerable? ¿A qué exactamente?</li>
+            </ol>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- FASE 1: GESTIÓN DE SECRETOS -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="phase">
+        <h2 data-icon="🔑" aria-label="Llave - Fase 1: Gestión de Secretos">Fase 1: Gestión de Secretos (Variables de Entorno) (60 min)</h2>
+        <p><strong>Regla de Oro:</strong> El código se comparte, la configuración se inyecta. Esto cumple con GDPR, PCI-DSS, y SOC2.</p>
+
+        <div class="tip">
+            <h3><span role="img" aria-label="libro abierto">📖</span> Principio: The Twelve-Factor App (Factor III: Config)</h3>
+            <p><em>"Store config in the environment"</em> — La configuración que varía entre entornos (desarrollo, staging, producción) debe almacenarse en variables de entorno, NO en el código. Esto incluye: credenciales de BD, claves API, secretos JWT, URLs de servicios externos.</p>
+        </div>
+
+        <h3>🛡️ Estrategia de Implementación</h3>
+
+        <div class="warning">
+            <h3><span role="img" aria-label="advertencia">⚠️</span> Paso Crítico: .gitignore + .env.example</h3>
+            <p>Antes de escribir cualquier código, asegura tu <code>.gitignore</code>:</p>
+            <div class="code-block code-bash">
+<pre># Archivos de secretos - NUNCA subir
+.env
+.env.local
+.env.production
+*.pfx
+*.key
+*.pem
+*.p12
+
+# Configuración local de .NET
+appsettings.Development.json
+appsettings.Local.json
+
+# Secretos de usuario .NET
+secrets.json</pre>
+            </div>
+            <p>Crea <code>.env.example</code> como plantilla para onboarding de nuevos desarrolladores:</p>
+            <div class="code-block">
+<pre># .env.example - Copia a .env y llena los valores
+DB_URL=postgresql://usuario:password@localhost:5432/nombre_db
+JWT_SECRET=genera_una_clave_de_64_caracteres_aqui
+JWT_REFRESH_SECRET=otra_clave_diferente_para_refresh
+ENVIRONMENT=development
+API_KEY_EXTERNA=tu_api_key_servicio_externo</pre>
+            </div>
+        </div>
+
+        <div class="dual-lang">
+            <div>
+                <h4>🐍 Python (FastAPI)</h4>
+                <p>Instalar: <code>pip install python-dotenv pydantic-settings</code></p>
+                <div class="code-block code-bash">
+<pre># Archivo .env (NO subir a Git)
+DB_URL="postgresql://user:pass@localhost:5432/eco_db"
+JWT_SECRET="x7y8z9_clave_super_larga_aleatoria_64chars_minimo"
+JWT_REFRESH_SECRET="otra_clave_diferente_para_refresh_tokens"
+JWT_ALGORITHM="HS256"
+JWT_EXPIRE_MINUTES=30
+ENVIRONMENT="development"</pre>
+                </div>
+                
+                <div class="code-block code-python">
+<pre># config.py - Configuración tipada y validada
+import os
+from dotenv import load_dotenv
+from pydantic_settings import BaseSettings
+from functools import lru_cache
+
+load_dotenv()
+
+class Settings(BaseSettings):
+    # Base de datos
+    database_url: str
+    
+    # JWT
+    jwt_secret: str
+    jwt_refresh_secret: str
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 30
+    
+    # Entorno
+    environment: str = "development"
+    
+    class Config:
+        env_file = ".env"
+        # Mapeo de nombres de variables
+        fields = {
+            "database_url": {"env": "DB_URL"},
+            "jwt_secret": {"env": "JWT_SECRET"},
+            "jwt_refresh_secret": {"env": "JWT_REFRESH_SECRET"},
+        }
+
+@lru_cache()  # Singleton - carga una sola vez
+def get_settings() -> Settings:
+    return Settings()
+
+# Validación al importar
+settings = get_settings()
+
+# Verificación explícita
+if len(settings.jwt_secret) < 32:
+    raise ValueError("JWT_SECRET debe tener al menos 32 caracteres")
+if settings.jwt_secret == settings.jwt_refresh_secret:
+    raise ValueError("JWT_SECRET y JWT_REFRESH_SECRET deben ser diferentes")</pre>
+                </div>
+
+                <div class="code-block code-python">
+<pre># Uso en auth.py
+from config import settings
+from jose import jwt
+from datetime import datetime, timedelta
+
+def crear_token(data: dict) -> str:
+    expire = datetime.utcnow() + timedelta(minutes=settings.jwt_expire_minutes)
+    to_encode = data.copy()
+    to_encode.update({"exp": expire})
+    return jwt.encode(
+        to_encode, 
+        settings.jwt_secret,  # Viene del .env
+        algorithm=settings.jwt_algorithm
+    )</pre>
+                </div>
+            </div>
+            <div>
+                <h4>🔷 C# (.NET Core)</h4>
+                <p>User Secrets para desarrollo; Variables de entorno para producción.</p>
+                <div class="code-block code-bash">
+<pre># Inicializar User Secrets (desarrollo local)
+dotnet user-secrets init
+
+# Agregar secretos
+dotnet user-secrets set "Jwt:Secret" "x7y8z9_clave_super_larga..."
+dotnet user-secrets set "Jwt:RefreshSecret" "otra_clave_refresh..."
+dotnet user-secrets set "Jwt:Algorithm" "HS256"
+dotnet user-secrets set "Jwt:ExpireMinutes" "30"
+dotnet user-secrets set "ConnectionStrings:EcoDb" "Server=localhost;..."
+
+# Ver secretos configurados
+dotnet user-secrets list</pre>
+                </div>
+
+                <div class="code-block code-csharp">
+<pre>// JwtOptions.cs - Clase de configuración tipada
+public class JwtOptions
+{
+    public const string SectionName = "Jwt";
+    
+    public string Secret { get; set; } = string.Empty;
+    public string RefreshSecret { get; set; } = string.Empty;
+    public string Algorithm { get; set; } = "HS256";
+    public int ExpireMinutes { get; set; } = 30;
+    
+    // Validación
+    public void Validate()
+    {
+        if (string.IsNullOrEmpty(Secret) || Secret.Length < 32)
+            throw new InvalidOperationException("JWT Secret inválido");
+        if (Secret == RefreshSecret)
+            throw new InvalidOperationException("Secret y RefreshSecret deben ser diferentes");
+    }
+}</pre>
+                </div>
+
+                <div class="code-block code-csharp">
+<pre>// Program.cs - Configuración con validación
+var builder = WebApplication.CreateBuilder(args);
+
+// Cargar y validar configuración
+var jwtOptions = builder.Configuration
+    .GetSection(JwtOptions.SectionName)
+    .Get&lt;JwtOptions&gt;();
+
+jwtOptions?.Validate();
+
+// Registrar para inyección de dependencias
+builder.Services.Configure&lt;JwtOptions&gt;(
+    builder.Configuration.GetSection(JwtOptions.SectionName)
+);
+
+// Usar IOptionsMonitor para cambios en caliente (rotación)
+builder.Services.AddSingleton&lt;IOptionsMonitor&lt;JwtOptions&gt;&gt;();
+
+var dbConn = builder.Configuration.GetConnectionString("EcoDb");
+if (string.IsNullOrEmpty(dbConn))
+    throw new InvalidOperationException("Falta ConnectionString:EcoDb");</pre>
+                </div>
+            </div>
+        </div>
+
+        <h3><span role="img" aria-label="flechas circulares">🔄</span> Rotación de Secretos</h3>
+        <p>Los secretos deben rotarse periódicamente (cada 90 días mínimo) o inmediatamente si hay sospecha de compromiso.</p>
+        
+        <div class="dual-lang">
+            <div>
+                <h4>🐍 Python: Rotación con Blacklist</h4>
+                <div class="code-block code-python">
+<pre># rotation.py - Estrategia de rotación gradual
+import redis
+from datetime import datetime, timedelta
+from config import settings
+
+redis_client = redis.Redis(host='localhost', port=6379, db=0)
+
+class SecretRotation:
+    BLACKLIST_PREFIX = "jwt_blacklist:"
+    GRACE_PERIOD_HOURS = 24  # Tokens viejos válidos por 24h
+    
+    @staticmethod
+    def rotate_jwt_secret(old_secret: str, new_secret: str):
+        """
+        Estrategia de rotación sin downtime:
+        1. Agregar old_secret a lista de secretos válidos temporales
+        2. Actualizar .env con new_secret
+        3. Tokens nuevos se firman con new_secret
+        4. Tokens viejos siguen validándose por GRACE_PERIOD
+        5. Después de GRACE_PERIOD, old_secret se invalida
+        """
+        grace_end = datetime.utcnow() + timedelta(hours=SecretRotation.GRACE_PERIOD_HOURS)
+        
+        # Guardar secreto viejo con TTL
+        redis_client.setex(
+            f"valid_secret:{old_secret[:8]}",  # Solo prefijo por seguridad
+            timedelta(hours=SecretRotation.GRACE_PERIOD_HOURS),
+            old_secret
+        )
+        
+        print(f"✅ Rotación iniciada. Secreto viejo válido hasta: {grace_end}")
+        print(f"⚠️  Actualiza JWT_SECRET en .env con: {new_secret[:8]}...")
+        
+        return {
+            "old_secret_valid_until": grace_end.isoformat(),
+            "action_required": "Actualizar .env y reiniciar servicios"
+        }
+    
+    @staticmethod
+    def blacklist_token(token_jti: str, expire_at: datetime):
+        """Agregar token específico a blacklist (logout, compromiso)"""
+        ttl = expire_at - datetime.utcnow()
+        if ttl.total_seconds() > 0:
+            redis_client.setex(
+                f"{SecretRotation.BLACKLIST_PREFIX}{token_jti}",
+                ttl,
+                "blacklisted"
+            )
+    
+    @staticmethod
+    def is_blacklisted(token_jti: str) -> bool:
+        return redis_client.exists(f"{SecretRotation.BLACKLIST_PREFIX}{token_jti}")</pre>
+                </div>
+            </div>
+            <div>
+                <h4>🔷 C#: Rotación con IOptionsMonitor</h4>
+                <div class="code-block code-csharp">
+<pre>// SecretRotationService.cs
+public class SecretRotationService
+{
+    private readonly IOptionsMonitor&lt;JwtOptions&gt; _jwtOptions;
+    private readonly IDistributedCache _cache;
+    private const int GracePeriodHours = 24;
+    
+    public SecretRotationService(
+        IOptionsMonitor&lt;JwtOptions&gt; jwtOptions,
+        IDistributedCache cache)
+    {
+        _jwtOptions = jwtOptions;
+        _cache = cache;
+        
+        // Escuchar cambios en configuración
+        _jwtOptions.OnChange(OnSecretChanged);
+    }
+    
+    private void OnSecretChanged(JwtOptions newOptions)
+    {
+        Console.WriteLine("⚠️ Configuración JWT actualizada");
+        // Lógica de migración gradual
+    }
+    
+    public async Task BlacklistTokenAsync(string jti, DateTime expireAt)
+    {
+        var ttl = expireAt - DateTime.UtcNow;
+        if (ttl > TimeSpan.Zero)
+        {
+            await _cache.SetStringAsync(
+                $"blacklist:{jti}",
+                "true",
+                new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = ttl
+                }
+            );
+        }
+    }
+    
+    public async Task&lt;bool&gt; IsBlacklistedAsync(string jti)
+    {
+        var result = await _cache.GetStringAsync($"blacklist:{jti}");
+        return result != null;
+    }
+}</pre>
+                </div>
+            </div>
+        </div>
+
+        <div class="activity">
+            <h3>Actividad: Implementa Gestión de Secretos (Nivel: Aplicar)</h3>
+            <ol>
+                <li>Crea el archivo <code>.gitignore</code> con las exclusiones necesarias.</li>
+                <li>Crea <code>.env</code> (Python) o configura User Secrets (C#) con tus credenciales.</li>
+                <li>Crea <code>.env.example</code> como plantilla documentada.</li>
+                <li>Refactoriza tu código para usar la configuración externalizada.</li>
+                <li>Verifica que la aplicación falle si falta algún secreto requerido.</li>
+                <li><strong>Prueba de fuego:</strong> Ejecuta <code>git status</code> — tu <code>.env</code> NO debe aparecer.</li>
+            </ol>
+        </div>
+
+        <!-- Checkpoint Fase 1 -->
+        <div class="checkpoint">
+            <h3><span role="img" aria-label="marca de verificación">✅</span> Checkpoint Fase 1: Gestión de Secretos</h3>
+            <ul>
+                <li>☐ <code>.env</code> creado con todos los secretos (DB, JWT, APIs)</li>
+                <li>☐ <code>.gitignore</code> incluye <code>.env</code> y archivos sensibles</li>
+                <li>☐ <code>.env.example</code> creado como plantilla</li>
+                <li>☐ Código refactorizado para leer de variables de entorno</li>
+                <li>☐ Aplicación falla si falta un secreto requerido</li>
+                <li>☐ <code>git status</code> no muestra archivos sensibles</li>
+            </ul>
+        </div>
+
+        <!-- PAUSA IA: Después de Fase 1 -->
+        <div class="ai-challenge">
+            <h3><span role="img" aria-label="robot">🤖</span> Reto IA #3: Auditoría de tu Configuración de Secretos</h3>
+            <p>Valida tu implementación con análisis de IA:</p>
+            <pre>Actúa como un ingeniero de seguridad DevSecOps. Audita mi configuración de secretos:
+
+**Mi .env.example:**
+```
+[Pega aquí tu .env.example]
+```
+
+**Mi código de configuración:**
+```
+[Pega aquí tu config.py o JwtOptions.cs]
+```
+
+**Mi .gitignore:**
+```
+[Pega aquí tu .gitignore]
+```
+
+Analiza:
+1. **Completitud:** ¿Faltan secretos que deberían estar externalizados?
+2. **Seguridad del .env.example:** ¿Revela información sensible en los placeholders?
+3. **Validación:** ¿El código valida correctamente los secretos?
+4. **Rotación:** ¿Hay estrategia para rotar secretos sin downtime?
+5. **Mejores prácticas:** Compara con estándares OWASP Secrets Management.
+
+Genera un score de 1-10 y recomendaciones priorizadas.</pre>
+            <p><strong>📝 Entregable:</strong> Implementa al menos 2 recomendaciones de la auditoría.</p>
+        </div>
+
+        <!-- Preguntas de Profundización Fase 1 -->
+        <div class="deep-questions">
+            <h3><span role="img" aria-label="pensando">🤔</span> Preguntas para Profundizar (Fase 1)</h3>
+            <ol>
+                <li>¿Por qué <code>.env.example</code> debería tener valores placeholder en lugar de ejemplos reales como <code>password123</code>?</li>
+                <li>Si usas Docker, ¿cómo pasarías secretos al contenedor sin exponerlos en el Dockerfile?</li>
+                <li>¿Qué ventajas tiene HashiCorp Vault sobre archivos <code>.env</code> para un equipo de 20 desarrolladores?</li>
+                <li>Si sospechas que tu JWT_SECRET fue comprometido, ¿cuál es el procedimiento de respuesta a incidentes?</li>
+                <li>¿Por qué el JWT_SECRET y JWT_REFRESH_SECRET deben ser diferentes?</li>
+            </ol>
+        </div>
+
+        <div class="warning">
+            <h3><span role="img" aria-label="lupa">🔍</span> Errores Comunes en Gestión de Secretos</h3>
+            <ul>
+                <li><strong>Entropía baja:</strong> Usa <code>openssl rand -hex 32</code> para generar secretos de 256 bits mínimo.</li>
+                <li><strong>Leak en logs:</strong> Nunca loguees <code>os.getenv("SECRET")</code> ni el contenido de tokens.</li>
+                <li><strong>Mismo secreto en todos los entornos:</strong> Dev, staging y prod deben tener secretos diferentes.</li>
+                <li><strong>Secretos en docker-compose.yml:</strong> Usa <code>docker secrets</code> o <code>env_file</code> sin versionar.</li>
+                <li><strong>Confiar solo en .gitignore:</strong> Si ya subiste un secreto, está en el historial de Git. Debes rotar.</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- FASE 2: HTTPS/TLS -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="phase">
+        <h2 data-icon="🔒" aria-label="Candado - Fase 2: Implementando HTTPS">Fase 2: Implementando HTTPS (90 min)</h2>
+        <p>HTTPS = HTTP + TLS. Necesitas: un <strong>certificado</strong> (identidad pública) y una <strong>llave privada</strong> (secreto del servidor).</p>
+
+        <h3>📊 Comparación de Herramientas para Certificados</h3>
+        <table class="comparison-table">
+            <thead>
+                <tr>
+                    <th>Herramienta</th>
+                    <th>Caso de Uso</th>
+                    <th>Ventajas</th>
+                    <th>Desventajas</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>mkcert</strong></td>
+                    <td>Desarrollo local</td>
+                    <td>Confianza automática en browsers, fácil instalación</td>
+                    <td>No válido en producción, requiere instalación</td>
+                </tr>
+                <tr>
+                    <td><strong>openssl</strong></td>
+                    <td>Universal</td>
+                    <td>Sin dependencias, flexible, disponible en todo servidor</td>
+                    <td>Configuración manual de trust, sintaxis compleja</td>
+                </tr>
+                <tr>
+                    <td><strong>Certbot (Let's Encrypt)</strong></td>
+                    <td>Producción</td>
+                    <td>Gratuito, renovación automática, reconocido globalmente</td>
+                    <td>Requiere dominio público y puertos 80/443 abiertos</td>
+                </tr>
+                <tr>
+                    <td><strong>AWS ACM</strong></td>
+                    <td>AWS Cloud</td>
+                    <td>Integración nativa con ALB/CloudFront, rotación automática</td>
+                    <td>Vendor lock-in, no exportable</td>
+                </tr>
+                <tr>
+                    <td><strong>Azure Key Vault</strong></td>
+                    <td>Azure Cloud</td>
+                    <td>Gestión centralizada, auditoría, integración con App Service</td>
+                    <td>Costo adicional, curva de aprendizaje</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>Subfase 2.1: Generar Certificados de Desarrollo (30 min)</h3>
+        
+        <div class="tip">
+            <strong><span role="img" aria-label="diana">🎯</span> Recomendación: usa mkcert para desarrollo local</strong><br>
+            Instala vía Homebrew (Mac), Chocolatey (Windows), o tu gestor de paquetes Linux.
+        </div>
+
+        <div class="dual-lang">
+            <div>
+                <h4>Opción A: mkcert (Recomendado para dev)</h4>
+                <div class="code-block code-bash">
+<pre># 1. Instalar según tu OS
+# Mac: brew install mkcert
+# Windows: choco install mkcert
+# Linux: sudo apt install mkcert
+
+# 2. Instalar CA local (una sola vez)
+mkcert -install
+# Esto agrega una CA raíz a tu sistema
+# Los browsers confiarán en certificados firmados por esta CA
+
+# 3. Generar certificado para desarrollo
+mkcert -key-file key.pem -cert-file cert.pem localhost 127.0.0.1 ecomarket.local
+
+# Resultado:
+# - cert.pem: Certificado público
+# - key.pem: Llave privada (¡proteger!)
+
+# 4. Verificar
+openssl x509 -in cert.pem -text -noout | head -20</pre>
+                </div>
+            </div>
+            <div>
+                <h4>Opción B: openssl (Universal)</h4>
+                <div class="code-block code-bash">
+<pre># Generar certificado autofirmado (self-signed)
+openssl req -x509 -newkey rsa:4096 \
+  -keyout key.pem \
+  -out cert.pem \
+  -days 365 \
+  -nodes \
+  -subj "/CN=localhost/O=EcoMarket Dev/C=MX"
+
+# Para desarrollo con múltiples hostnames, crear config:
+cat > openssl.cnf << EOF
+[req]
+distinguished_name = req_distinguished_name
+x509_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+CN = localhost
+
+[v3_req]
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = localhost
+DNS.2 = ecomarket.local
+IP.1 = 127.0.0.1
+EOF
+
+openssl req -x509 -newkey rsa:4096 \
+  -keyout key.pem -out cert.pem \
+  -days 365 -nodes -config openssl.cnf
+
+# Nota: Deberás agregar cert.pem a tu trust store manualmente</pre>
+                </div>
+            </div>
+        </div>
+
+        <div class="warning">
+            <h3><span role="img" aria-label="advertencia">⚠️</span> ¡Los certificados son secretos!</h3>
+            <p>Agrega a tu <code>.gitignore</code>:</p>
+            <div class="code-block">
+<pre>*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+certs/</pre>
+            </div>
+        </div>
+
+        <h3>Subfase 2.2: Configurar Backend para HTTPS (60 min)</h3>
+
+        <div class="dual-lang">
+            <div>
+                <h4>🐍 Python (Uvicorn / FastAPI)</h4>
+                <div class="code-block code-python">
+<pre># main.py - Servidor HTTPS
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
+
+app = FastAPI(title="EcoMarket API", version="2.0")
+
+# Middleware para redirigir HTTP → HTTPS
+# IMPORTANTE: Solo activar en producción o cuando HTTPS esté configurado
+import os
+if os.getenv("ENVIRONMENT") == "production":
+    app.add_middleware(HTTPSRedirectMiddleware)
+
+@app.get("/")
+def root():
+    return {"status": "secure", "protocol": "HTTPS"}
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+if __name__ == "__main__":
+    # Desarrollo con HTTPS
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8443,
+        ssl_keyfile="./certs/key.pem",
+        ssl_certfile="./certs/cert.pem",
+        reload=True  # Solo en desarrollo
+    )
+    
+# Alternativa: ejecutar desde terminal
+# uvicorn main:app --host 0.0.0.0 --port 8443 \
+#   --ssl-keyfile ./certs/key.pem \
+#   --ssl-certfile ./certs/cert.pem</pre>
+                </div>
+                <p>Accede: <code>https://localhost:8443</code></p>
+            </div>
+            <div>
+                <h4>🔷 C# (.NET Kestrel)</h4>
+                <div class="code-block code-csharp">
+<pre>// Program.cs - Configuración HTTPS
+var builder = WebApplication.CreateBuilder(args);
+
+// Configurar Kestrel para HTTPS
+builder.WebHost.ConfigureKestrel(options =>
+{
+    // Puerto HTTP (redirigirá a HTTPS)
+    options.ListenLocalhost(5000);
+    
+    // Puerto HTTPS
+    options.ListenLocalhost(5001, listenOptions =>
+    {
+        listenOptions.UseHttps("certs/cert.pfx", "password_del_cert");
+        // O con archivos PEM:
+        // listenOptions.UseHttps(certPath, keyPath);
+    });
+});
+
+var app = builder.Build();
+
+// Middleware de redirección HTTP → HTTPS
+app.UseHttpsRedirection();
+
+// Habilitar HSTS en producción
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts();
+}
+
+app.MapGet("/", () => new { status = "secure", protocol = "HTTPS" });
+app.MapGet("/health", () => new { status = "ok" });
+
+app.Run();</pre>
+                </div>
+
+                <div class="code-block code-bash">
+<pre># Convertir PEM a PFX (requerido por .NET)
+openssl pkcs12 -export \
+  -out cert.pfx \
+  -inkey key.pem \
+  -in cert.pem \
+  -password pass:tu_password
+
+# O usar certificado de desarrollo de .NET
+dotnet dev-certs https --trust</pre>
+                </div>
+            </div>
+        </div>
+
+        <div class="activity">
+            <h3>Actividad: Verificación E2E de HTTPS (Nivel: Aplicar)</h3>
+            <ol>
+                <li><strong>Levanta tu backend en HTTPS</strong> (puerto 8443 o 5001).</li>
+                <li><strong>Prueba acceso HTTP:</strong> Intenta <code>http://localhost:8443</code> — debe fallar o redirigir.</li>
+                <li><strong>Prueba en browser:</strong> Accede <code>https://localhost:8443</code> — verifica el candado 🔒</li>
+                <li><strong>Inspecciona certificado:</strong> Click en candado → "Certificado" → verifica emisor y validez.</li>
+                <li><strong>Prueba con curl:</strong>
+                    <div class="code-block code-bash">
+<pre># Con certificado self-signed, necesitas -k (insecure)
+curl -k https://localhost:8443/health
+
+# O agregar el certificado como confiable
+curl --cacert cert.pem https://localhost:8443/health</pre>
+                    </div>
+                </li>
+                <li><strong>Prueba en Postman:</strong> Settings → SSL verification → OFF (solo dev)</li>
+            </ol>
+        </div>
+
+        <h3><span role="img" aria-label="microscopio">🔬</span> Actividad Avanzada: Captura de Tráfico con Wireshark</h3>
+        <div class="activity">
+            <h4>Demostración Visual: HTTP vs HTTPS (Nivel: Analizar)</h4>
+            <p>Esta actividad demuestra visualmente por qué HTTPS es esencial.</p>
+            
+            <div class="code-block code-bash">
+<pre># Preparación
+# 1. Instala Wireshark: https://www.wireshark.org/
+# 2. Levanta tu API temporalmente en HTTP (puerto 8000) y HTTPS (puerto 8443)
+
+# === CAPTURA HTTP (INSEGURO) ===
+# Paso 1: Abre Wireshark
+# Paso 2: Selecciona interfaz "Loopback: lo0" (Mac) o "Adapter for loopback" (Windows)
+# Paso 3: Aplica filtro: http && tcp.port == 8000
+# Paso 4: Inicia captura
+
+# Paso 5: En otra terminal, envía request con credenciales
+curl -X POST http://localhost:8000/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "secreto123"}'
+
+# Paso 6: En Wireshark, detén captura y busca el paquete POST
+# Paso 7: Click derecho → Follow → HTTP Stream
+# 🚨 OBSERVA: Las credenciales aparecen en TEXTO PLANO
+
+# === CAPTURA HTTPS (SEGURO) ===
+# Paso 1: Cambia filtro a: tcp.port == 8443
+# Paso 2: Inicia nueva captura
+
+# Paso 3: Envía el mismo request por HTTPS
+curl -k -X POST https://localhost:8443/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "secreto123"}'
+
+# Paso 4: En Wireshark, busca paquetes TLS
+# Paso 5: Intenta Follow → TLS Stream
+# ✅ OBSERVA: Solo ves "Application Data" cifrado, NO las credenciales</pre>
+            </div>
+            
+            <p><strong>📸 Documenta:</strong> Toma screenshots de ambas capturas para tu informe del Hito 2.</p>
+        </div>
+
+        <!-- Checkpoint Fase 2 -->
+        <div class="checkpoint">
+            <h3><span role="img" aria-label="marca de verificación">✅</span> Checkpoint Fase 2: HTTPS Implementado</h3>
+            <ul>
+                <li>☐ Certificados generados (cert.pem, key.pem o .pfx)</li>
+                <li>☐ Certificados agregados a .gitignore</li>
+                <li>☐ Servidor levanta en puerto HTTPS (8443 o 5001)</li>
+                <li>☐ Browser muestra candado 🔒 (puede requerir aceptar excepción para self-signed)</li>
+                <li>☐ Middleware de redirección HTTP→HTTPS funcionando</li>
+                <li>☐ curl/Postman pueden hacer requests HTTPS</li>
+                <li>☐ (Bonus) Captura Wireshark demuestra cifrado</li>
+            </ul>
+        </div>
+
+        <!-- PAUSA IA: Después de Fase 2 -->
+        <div class="ai-challenge">
+            <h3><span role="img" aria-label="robot">🤖</span> Reto IA #4: Troubleshooting de HTTPS</h3>
+            <p>Usa IA para diagnosticar y resolver problemas comunes:</p>
+            <pre>Estoy configurando HTTPS para mi API [Python/FastAPI | C#/.NET] y tengo el siguiente problema:
+
+**Síntoma:**
+[Describe el error exacto, por ejemplo:]
+- Browser dice "NET::ERR_CERT_AUTHORITY_INVALID"
+- curl falla con "SSL certificate problem: self signed certificate"
+- El servidor no inicia con error "ssl.SSLError: [SSL] PEM lib"
+
+**Mi configuración:**
+- OS: [Windows/Mac/Linux]
+- Certificado generado con: [mkcert/openssl]
+- Comando usado: [pega el comando]
+
+**Logs relevantes:**
+```
+[Pega logs de error]
+```
+
+Necesito:
+1. Diagnóstico de la causa raíz
+2. Comandos específicos para verificar el problema
+3. Solución paso a paso
+4. Cómo prevenir este error en el futuro</pre>
+            <p><strong>📝 Documenta:</strong> Si encuentras un problema, guarda el diagnóstico y solución para tu README.</p>
+        </div>
+
+        <!-- Preguntas de Profundización Fase 2 -->
+        <div class="deep-questions">
+            <h3><span role="img" aria-label="pensando">🤔</span> Preguntas para Profundizar (Fase 2)</h3>
+            <ol>
+                <li>¿Por qué los certificados de Let's Encrypt solo duran 90 días mientras que otros CAs dan certificados de 1-2 años?</li>
+                <li>Si tu certificado expira a las 3 AM de un domingo, ¿qué pasa con tus usuarios? ¿Cómo prevenirías esto?</li>
+                <li>¿Cuál es la diferencia entre TLS 1.2 y TLS 1.3? ¿Por qué deberías preferir 1.3?</li>
+                <li>¿Qué es Certificate Pinning y por qué es importante para apps móviles?</li>
+                <li>Si un atacante obtiene tu llave privada (key.pem), ¿qué puede hacer? ¿Cómo te recuperas?</li>
+                <li>¿Por qué no es suficiente tener HTTPS si el certificado es autofirmado en producción?</li>
+            </ol>
+        </div>
+
+        <div class="warning">
+            <h3><span role="img" aria-label="lupa">🔍</span> Errores Comunes en HTTPS</h3>
+            <ul>
+                <li><strong>ERR_CERT_AUTHORITY_INVALID:</strong> Browser no confía en el CA. Solución: <code>mkcert -install</code> o importar CA manualmente.</li>
+                <li><strong>No redirect HTTP→HTTPS:</strong> Verifica que el middleware está activo y en el orden correcto.</li>
+                <li><strong>Mixed content:</strong> Tu página HTTPS carga recursos HTTP. Usa URLs relativas o HTTPS absolutas.</li>
+                <li><strong>Cert expirado:</strong> Implementa renovación automática con certbot (producción) o script de alerta.</li>
+                <li><strong>Wrong hostname:</strong> El certificado debe incluir el hostname exacto (localhost vs 127.0.0.1 vs nombre.local).</li>
+            </ul>
+        </div>
+
+        <!-- Actividad Docker -->
+        <div class="activity">
+            <h3>Actividad Opcional: HTTPS en Docker (+1% Bonos)</h3>
+            <div class="code-block">
+<pre># docker-compose.yml
+version: '3.8'
+services:
+  backend:
+    build: .
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./certs:/app/certs:ro  # Read-only
+    environment:
+      - ENVIRONMENT=development
+    command: >
+      uvicorn main:app 
+      --host 0.0.0.0 
+      --port 8443 
+      --ssl-keyfile /app/certs/key.pem 
+      --ssl-certfile /app/certs/cert.pem
+
+# Dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+# NO copiar certs en la imagen - usar volumen
+EXPOSE 8443</pre>
+            </div>
+            <div class="code-block code-bash">
+<pre># Levantar
+docker-compose up --build
+
+# Probar
+curl -k https://localhost:8443/health</pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- FASE 3: PRODUCCIÓN -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="phase">
+        <h2 data-icon="🚀" aria-label="Cohete - Fase 3: Arquitectura de Producción">Fase 3: Arquitectura de Producción (SSL Termination) (30 min)</h2>
+        <p>En sistemas distribuidos, usa un <strong>Reverse Proxy</strong> para "terminar" TLS. Esto reduce carga de CPU en microservicios y centraliza la gestión de certificados.</p>
+
+        <div class="diagram">
+            <div class="mermaid" role="img" aria-label="Diagrama de arquitectura mostrando SSL Termination: el cliente se conecta por HTTPS al Load Balancer Nginx, que descifra el tráfico y lo envía por HTTP a los microservicios internos Auth, Productos y Órdenes">
+graph LR
+    subgraph "Internet"
+        Client[📱 Cliente]
+    end
+    
+    subgraph "DMZ"
+        LB[🔐 Nginx / Load Balancer<br/>SSL Termination]
+    end
+    
+    subgraph "Red Privada"
+        S1[🟢 Auth Service]
+        S2[🟢 Productos Service]
+        S3[🟢 Órdenes Service]
+    end
+    
+    Client -- "HTTPS (443) 🔒" --> LB
+    LB -- "HTTP (80)" --> S1
+    LB -- "HTTP (80)" --> S2
+    LB -- "HTTP (80)" --> S3
+    
+    style LB fill:#f9cb9c,stroke:#e69138
+    style S1 fill:#b6d7a8,stroke:#6aa84f
+    style S2 fill:#b6d7a8,stroke:#6aa84f
+    style S3 fill:#b6d7a8,stroke:#6aa84f
+            </div>
+        </div>
+        <p style="text-align: center;"><em>SSL Termination: El proxy descifra TLS y reenvía HTTP internamente. Para Zero Trust, usa mTLS entre servicios.</em></p>
+
+        <h3>Configuración Nginx con Let's Encrypt (Producción)</h3>
+        <div class="code-block">
+<pre># /etc/nginx/sites-available/ecomarket
+server {
+    listen 80;
+    server_name api.ecomarket.com;
+    
+    # Redirigir todo HTTP a HTTPS
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name api.ecomarket.com;
+    
+    # Certificados de Let's Encrypt (generados por Certbot)
+    ssl_certificate /etc/letsencrypt/live/api.ecomarket.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.ecomarket.com/privkey.pem;
+    
+    # Configuración TLS moderna (Mozilla SSL Config Generator)
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
+    ssl_prefer_server_ciphers off;
+    
+    # HSTS - forzar HTTPS por 1 año
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    
+    # Headers de seguridad adicionales
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    
+    location / {
+        proxy_pass http://backend:8000;  # Backend interno (sin TLS)
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# Renovación automática de certificados (cron job)
+# 0 0 1 * * certbot renew --quiet && nginx -s reload</pre>
+        </div>
+
+        <div class="tip">
+            <h3>🔄 Certbot: Obtención y Renovación Automática</h3>
+            <div class="code-block code-bash">
+<pre># Instalar Certbot
+sudo apt install certbot python3-certbot-nginx
+
+# Obtener certificado (primera vez)
+sudo certbot --nginx -d api.ecomarket.com -d www.api.ecomarket.com
+
+# Probar renovación
+sudo certbot renew --dry-run
+
+# La renovación automática se configura en /etc/cron.d/certbot</pre>
+            </div>
+        </div>
+
+        <div class="reflection">
+            <h3><span role="img" aria-label="pensando">🤔</span> Reflexión: ¿HTTP interno es seguro?</h3>
+            <p>El tráfico interno (Nginx → microservicios) viaja sin cifrar. Esto es aceptable si:</p>
+            <ul>
+                <li>La red interna está aislada (VPC, Kubernetes network policies)</li>
+                <li>Confías en todos los servicios de la red</li>
+            </ul>
+            <p>Para <strong>Zero Trust</strong> (máxima seguridad), implementa <strong>mTLS</strong> (mutual TLS) entre servicios: cada servicio tiene su propio certificado y verifica al otro.</p>
+        </div>
+
+        <!-- PAUSA IA: Diseño de Arquitectura -->
+        <div class="ai-challenge">
+            <h3><span role="img" aria-label="robot">🤖</span> Reto IA #5: Diseña tu Arquitectura de Seguridad (Nivel: Crear)</h3>
+            <p>Usa IA para crear un diseño personalizado para tu proyecto:</p>
+            <pre>Actúa como un arquitecto de soluciones cloud con especialidad en seguridad.
+
+**Mi contexto EcoMarket:**
+- Stack: [Python/FastAPI | C#/.NET]
+- Servicios: [Lista tus microservicios, ej: Auth, Productos, Órdenes, Pagos]
+- Base de datos: [PostgreSQL/MongoDB/etc.]
+- Despliegue actual: [Local/Docker/AWS/Azure/GCP]
+- Usuarios esperados: [número aproximado]
+- Datos sensibles: [tipos de datos que manejas]
+
+**Requisitos:**
+1. JWT implementado (Semana 8)
+2. HTTPS obligatorio para clientes
+3. Secretos externalizados
+4. Presupuesto: [bajo/medio/alto]
+
+**Genera:**
+1. Diagrama de arquitectura (en formato Mermaid) con:
+   - Flujo de autenticación completo
+   - SSL termination point
+   - Ubicación de secretos
+   - Comunicación entre servicios
+   
+2. Decisiones de diseño justificadas:
+   - ¿SSL termination en proxy o en cada servicio?
+   - ¿mTLS interno o HTTP?
+   - ¿Vault vs. env vars vs. cloud secrets manager?
+   
+3. Checklist de implementación priorizado
+
+4. Estimación de esfuerzo (horas) por componente</pre>
+            <p><strong>📝 Entregable:</strong> El diagrama Mermaid generado será parte de tu documentación del Hito 2.</p>
+        </div>
+
+        <!-- Checkpoint Fase 3 -->
+        <div class="checkpoint">
+            <h3><span role="img" aria-label="marca de verificación">✅</span> Checkpoint Fase 3: Arquitectura de Producción</h3>
+            <ul>
+                <li>☐ Entiendo SSL Termination y cuándo usarlo</li>
+                <li>☐ Conozco la diferencia entre HTTP interno vs mTLS</li>
+                <li>☐ Sé cómo obtener certificados con Let's Encrypt</li>
+                <li>☐ Tengo un diseño de arquitectura para mi proyecto</li>
+                <li>☐ Conozco las implicaciones de Zero Trust</li>
+            </ul>
+        </div>
+
+        <!-- Preguntas de Profundización Fase 3 -->
+        <div class="deep-questions">
+            <h3><span role="img" aria-label="pensando">🤔</span> Preguntas para Profundizar (Fase 3)</h3>
+            <ol>
+                <li>¿Cuál es el overhead de CPU de TLS? ¿Justifica usar SSL termination?</li>
+                <li>Si usas Kubernetes, ¿cómo implementarías mTLS automático? (Pista: service mesh)</li>
+                <li>¿Qué headers de seguridad adicionales a HSTS deberías implementar y por qué?</li>
+                <li>¿Cómo afecta HTTP/2 y HTTP/3 a tu estrategia de TLS?</li>
+                <li>Si tu load balancer es comprometido, ¿qué datos quedan expuestos?</li>
+            </ol>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- DIAGRAMA EVOLUTIVO -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="phase">
+        <h2 data-icon="📈" aria-label="Gráfica ascendente - Evolución del proyecto">Evolución: De API Insegura a Fortaleza Digital</h2>
+        
+        <div class="diagram">
+EVOLUCIÓN DE ECOMARKET: Semanas 1-9
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SEMANAS 1-4 (Monolito):
+┌────────────────────────────────────────┐
+│           MONOLITO                     │
+│  ┌──────────────────────────────────┐  │
+│  │  • Sesiones en memoria           │  │
+│  │  • Contraseñas en código         │  │
+│  │  • HTTP sin cifrar               │  │
+│  │  • Un solo servidor              │  │
+│  └──────────────────────────────────┘  │
+│                                        │
+│  🔴 Problemas:                         │
+│  • No escala horizontalmente          │
+│  • Secretos expuestos en Git          │
+│  • Datos viajan en texto plano        │
+│  • Sin autenticación robusta          │
+└────────────────────────────────────────┘
+
+SEMANAS 5-7 (Distribuido sin Seguridad):
+┌────────────────────────────────────────┐
+│         LOAD BALANCER                  │
+└───────────┬───────────┬───────────┬────┘
+            │           │           │
+   ┌────────▼──┐  ┌─────▼────┐  ┌──▼───────┐
+   │ Servicio 1│  │Servicio 2│  │Servicio 3│
+   └─────┬─────┘  └────┬─────┘  └────┬─────┘
+         │             │              │
+         └─────────────┼──────────────┘
+                       │
+         ┌─────────────▼─────────────┐
+         │  BD Replicada/Sharded     │
+         └───────────────────────────┘
+
+   🟡 Mejoras:
+   • Escala horizontalmente ✅
+   • Alta disponibilidad ✅
+   
+   🔴 Pero aún:
+   • Secretos hardcodeados
+   • HTTP sin cifrar
+   • Sin autenticación distribuida
+
+SEMANAS 8-9 (Distribuido + Seguro):
+┌─────────────────────────────────────────────────────────────────────────┐
+│                                                                         │
+│   📱 Clientes                                                           │
+│       │                                                                 │
+│       │ HTTPS (TLS 1.3) 🔒                                              │
+│       ▼                                                                 │
+│   ┌───────────────────────────────────────────────────┐                │
+│   │         NGINX (SSL Termination)                    │                │
+│   │         + Let's Encrypt Certs                      │                │
+│   │         + Rate Limiting                            │                │
+│   └───────────────────┬───────────────────────────────┘                │
+│                       │                                                 │
+│          HTTP interno (o mTLS para Zero Trust)                          │
+│                       │                                                 │
+│   ┌───────────────────┼───────────────────────────────┐                │
+│   │                   │                               │                 │
+│   │  ┌────────────────▼───────────────────────────┐   │                │
+│   │  │           JWT Middleware                    │   │                │
+│   │  │    (Valida tokens en cada servicio)        │   │                │
+│   │  └────────────────────────────────────────────┘   │                │
+│   │                   │                               │                 │
+│   │     ┌─────────────┼─────────────┐                │                 │
+│   │     │             │             │                │                 │
+│   │ ┌───▼───┐    ┌────▼────┐   ┌────▼────┐          │                 │
+│   │ │ Auth  │    │Productos│   │ Órdenes │          │                 │
+│   │ │Service│    │ Service │   │ Service │          │                 │
+│   │ └───────┘    └─────────┘   └─────────┘          │                 │
+│   │                                                  │                 │
+│   │              RED PRIVADA                         │                 │
+│   └──────────────────────────────────────────────────┘                │
+│                       │                                                 │
+│   ┌───────────────────▼────────────────────────────┐                   │
+│   │              BD Replicada                       │                   │
+│   │         (Conexión cifrada TLS)                 │                   │
+│   └────────────────────────────────────────────────┘                   │
+│                                                                         │
+│   ┌────────────────────────────────────────────────┐                   │
+│   │    🔐 Gestión de Secretos                      │                   │
+│   │    (.env / Vault / Cloud Secrets Manager)      │                   │
+│   │    • JWT_SECRET                                │                   │
+│   │    • DB_PASSWORD                               │                   │
+│   │    • API_KEYS                                  │                   │
+│   └────────────────────────────────────────────────┘                   │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+✅ RESULTADO FINAL:
+• Escalabilidad horizontal sin límites (Sem 5-6)
+• Alta disponibilidad con replicación (Sem 7)
+• Autenticación distribuida con JWT (Sem 8)
+• Comunicación cifrada con HTTPS (Sem 9)
+• Secretos protegidos y rotables (Sem 9)
+• Auditable y compliant (GDPR, PCI-DSS)
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- CIERRE E INTEGRACIÓN -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="phase" style="background: #e8f5e8; border-top: 5px solid #28a745;">
+        <h2 data-icon="📝" aria-label="Nota con lápiz - Checklist final">Checklist Final Hito 2: Integración Completa</h2>
+        <p>Verifica todos los requisitos antes de entregar:</p>
+        
+        <table class="comparison-table">
+            <thead>
+                <tr>
+                    <th>Requisito</th>
+                    <th>Criterio de Aceptación</th>
+                    <th>✓</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Autenticación (Sem 8)</strong></td>
+                    <td>/login devuelve JWT válido. Endpoints privados retornan 401 sin token.</td>
+                    <td>☐</td>
+                </tr>
+                <tr>
+                    <td><strong>Autorización (Sem 8)</strong></td>
+                    <td>Roles implementados (admin/user). 403 si rol insuficiente.</td>
+                    <td>☐</td>
+                </tr>
+                <tr>
+                    <td><strong>Secretos (Sem 9)</strong></td>
+                    <td>Cero hardcode. .env/.UserSecrets funcionando. .env.example presente.</td>
+                    <td>☐</td>
+                </tr>
+                <tr>
+                    <td><strong>HTTPS (Sem 9)</strong></td>
+                    <td>Servidor en puerto HTTPS. Redirect HTTP→HTTPS. Candado en browser.</td>
+                    <td>☐</td>
+                </tr>
+                <tr>
+                    <td><strong>Documentación</strong></td>
+                    <td>README con: setup de certs, configuración de .env, troubleshooting.</td>
+                    <td>☐</td>
+                </tr>
+                <tr>
+                    <td><strong>Demo Video</strong></td>
+                    <td>Video 2-3 min mostrando: login, token, HTTPS, endpoint protegido.</td>
+                    <td>☐</td>
+                </tr>
+                <tr>
+                    <td><strong>Informe Técnico</strong></td>
+                    <td>Justificación de decisiones. Diagrama de arquitectura.</td>
+                    <td>☐</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3><span role="img" aria-label="enlace">🔗</span> Actividad Integradora: Flujo E2E Seguro (Nivel: Crear)</h3>
+        <div class="activity">
+            <p>Demuestra el flujo completo JWT + HTTPS + Secretos:</p>
+            <ol>
+                <li>Cliente hace POST /login vía <strong>HTTPS</strong> (captura en Wireshark: datos cifrados)</li>
+                <li>Servidor valida credenciales contra BD (conexión también cifrada)</li>
+                <li>Servidor firma JWT con <strong>SECRET del .env</strong> (no hardcoded)</li>
+                <li>Token viaja de regreso cifrado por <strong>TLS</strong></li>
+                <li>Cliente usa token para GET /ordenes (endpoint protegido)</li>
+                <li>Middleware valida token con el mismo SECRET del .env</li>
+                <li>Respuesta cifrada por TLS llega al cliente</li>
+            </ol>
+            <p><strong>Documenta en tu informe:</strong></p>
+            <ul>
+                <li>¿Qué protege <strong>HTTPS</strong>? → Datos en tránsito (confidencialidad)</li>
+                <li>¿Qué protege <strong>JWT</strong>? → Identidad y autorización</li>
+                <li>¿Qué protege el <strong>.env</strong>? → Secretos fuera del código</li>
+                <li>¿Qué pasa si falla cada uno?</li>
+            </ul>
+        </div>
+
+        <!-- RETO IA FINAL -->
+        <div class="ai-challenge">
+            <h3><span role="img" aria-label="robot">🤖</span> Reto IA Final: Síntesis y Auditoría de Cierre</h3>
+            <pre>Realiza una auditoría final de mi implementación de seguridad para EcoMarket Hito 2.
+
+**Estado actual:**
+1. JWT: [Describe tu implementación - algoritmo, claims, expiración, refresh]
+2. HTTPS: [Describe - certificado usado, puerto, redirección]
+3. Secretos: [Describe - dónde están, cómo se cargan, qué incluyen]
+
+**Código de mi middleware de autenticación:**
+```
+[Pega tu código]
+```
+
+**Mi .env.example:**
+```
+[Pega tu plantilla]
+```
+
+**Genera:**
+1. **Score de seguridad (1-100)** con breakdown por área
+2. **Vulnerabilidades encontradas** (críticas, medias, bajas)
+3. **Comparación antes/después** (vs. tu auditoría del Reto #1)
+4. **Top 3 mejoras** para implementar en siguientes iteraciones
+5. **Certificación:** ¿Está listo para un ambiente de staging? ¿Producción?
+
+Sé riguroso pero constructivo.</pre>
+            <p><strong>📝 Entregable:</strong> Incluye el score y las recomendaciones en tu informe del Hito 2.</p>
+        </div>
+
+        <div class="ai-prompt">
+            <h4><span role="img" aria-label="robot">🤖</span> Prompt para Informe Final</h4>
+            <pre>Ayúdame a redactar la conclusión de mi informe técnico para Hito 2 EcoMarket.
+
+Cubre:
+1. Cómo JWT + HTTPS garantiza la Tríada CIA:
+   - Confidencialidad (¿qué componente y cómo?)
+   - Integridad (¿qué componente y cómo?)
+   - Disponibilidad (¿cómo se relaciona?)
+   
+2. Beneficios de externalizar secretos para el ciclo DevOps:
+   - CI/CD seguro
+   - Rotación sin downtime
+   - Onboarding de desarrolladores
+   
+3. Desafíos encontrados y soluciones aplicadas
+
+4. Próximos pasos para evolución del sistema:
+   - Monitoreo de seguridad
+   - Service mesh / mTLS
+   - Vault vs cloud secrets
+
+Incluye un diagrama Mermaid de la arquitectura final.
+Extensión: ~500 palabras + diagrama.</pre>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- REFLEXIÓN FINAL -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="phase">
+        <h2 data-icon="🎓" aria-label="Birrete de graduación - Reflexión final">Reflexión Final: De Sistemas Escalables a Sistemas Seguros</h2>
+
+        <div class="reflection">
+            <h3><span role="img" aria-label="pensando">🤔</span> Preguntas para Profundizar (Cierre de Unidad IV)</h3>
+            <ol>
+                <li>¿Qué trade-offs introduces al pasar de APIs abiertas a APIs protegidas (latencia, complejidad, costos)?</li>
+                <li>¿Cómo explicarías a un stakeholder no técnico por qué la seguridad es una inversión, no un gasto?</li>
+                <li>Si mañana agregas un nuevo microservicio, ¿qué documentación necesita para integrarse al sistema seguro?</li>
+                <li>¿Cómo medirías el ROI de implementar estas medidas de seguridad?</li>
+                <li>¿Qué harías diferente si empezaras el proyecto desde cero con estos conocimientos?</li>
+                <li>¿Cómo se relaciona la seguridad con la confianza del usuario y el éxito del negocio?</li>
+            </ol>
+            
+            <h4 style="margin-top: 20px; color: #dc3545;">💭 Pregunta Abierta para Reflexión Personal</h4>
+            <p style="font-style: italic; font-size: 1.1em; border-left: 3px solid #dc3545; padding-left: 15px; margin: 15px 0;">
+                "¿Qué concepto de seguridad te sorprendió más y por qué?"
+            </p>
+            <p>Comparte tu respuesta en el foro del curso o inclúyela en tu informe del Hito 2. No hay respuesta incorrecta — lo importante es la reflexión sobre tu propio proceso de aprendizaje.</p>
+        </div>
+
+        <div class="tip">
+            <h3><span role="img" aria-label="estrella brillante">🌟</span> Valor para tu Carrera Profesional</h3>
+            <ul>
+                <li><strong>Portafolio:</strong> Ahora tienes un sistema distribuido con autenticación JWT, HTTPS, y gestión de secretos — tres requisitos en el 90% de ofertas de trabajo backend/DevOps.</li>
+                <li><strong>Certificaciones:</strong> Los conceptos cubiertos son fundamentales para AWS Solutions Architect, Azure Administrator, y certificaciones de seguridad.</li>
+                <li><strong>Entrevistas:</strong> "Cuéntame sobre un sistema seguro que hayas implementado" — ahora tienes una historia real con detalles técnicos.</li>
+                <li><strong>Pensamiento arquitectónico:</strong> Pasaste de pensar en código a pensar en sistemas, capas, y trade-offs.</li>
+            </ul>
+        </div>
+
+        <div class="tip">
+            <h3><span role="img" aria-label="bombilla">💡</span> Próximos Pasos: Semana 10 y Más Allá</h3>
+            <ul>
+                <li><strong>Monitoreo de Seguridad:</strong> Prometheus/Grafana para detectar tokens robados, TLS fallidos, patrones de ataque.</li>
+                <li><strong>Compliance:</strong> Auditorías GDPR, logs de acceso, retención de datos.</li>
+                <li><strong>Service Mesh:</strong> Istio/Linkerd para mTLS automático entre microservicios.</li>
+                <li><strong>Secrets Management Avanzado:</strong> HashiCorp Vault con rotación automática y auditoría.</li>
+                <li><strong>WAF (Web Application Firewall):</strong> Protección contra OWASP Top 10 a nivel de red.</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- GLOSARIO EXPANDIDO -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="glossary">
+        <h3><span role="img" aria-label="libro abierto">📖</span> Glosario Técnico</h3>
+        <dl>
+            <dt>TLS (Transport Layer Security)</dt>
+            <dd>Protocolo criptográfico para comunicación segura. TLS 1.3 (2018) es el estándar actual, más rápido y seguro que TLS 1.2.</dd>
+            
+            <dt>SSL (Secure Sockets Layer)</dt>
+            <dd>Predecesor obsoleto de TLS. El término "SSL" se usa coloquialmente para referirse a TLS.</dd>
+            
+            <dt>MITM (Man-in-the-Middle)</dt>
+            <dd>Ataque donde un tercero intercepta comunicación entre dos partes. HTTPS previene esto mediante cifrado y verificación de identidad.</dd>
+            
+            <dt>SSL Termination</dt>
+            <dd>Práctica de descifrar TLS en un proxy/load balancer, enviando tráfico HTTP internamente. Reduce carga en backends.</dd>
+            
+            <dt>mTLS (Mutual TLS)</dt>
+            <dd>TLS donde ambas partes (cliente y servidor) presentan certificados. Usado para comunicación segura entre servicios (Zero Trust).</dd>
+            
+            <dt>Zero Trust</dt>
+            <dd>Modelo de seguridad: "nunca confíes, siempre verifica". Todo acceso requiere autenticación, incluso dentro de la red privada.</dd>
+            
+            <dt>CA (Certificate Authority)</dt>
+            <dd>Entidad que emite certificados digitales. Let's Encrypt es una CA gratuita y automatizada.</dd>
+            
+            <dt>PKI (Public Key Infrastructure)</dt>
+            <dd>Sistema de certificados, claves públicas/privadas, y CAs que habilita comunicación segura.</dd>
+            
+            <dt>CSR (Certificate Signing Request)</dt>
+            <dd>Solicitud enviada a una CA para obtener un certificado firmado. Contiene la clave pública y datos del solicitante.</dd>
+            
+            <dt>HSTS (HTTP Strict Transport Security)</dt>
+            <dd>Header que instruye al browser a usar solo HTTPS para un dominio. Previene downgrade attacks.</dd>
+            
+            <dt>Twelve-Factor App</dt>
+            <dd>Metodología para construir aplicaciones cloud-native. Factor III: "Store config in the environment".</dd>
+            
+            <dt>Secrets Management</dt>
+            <dd>Práctica de almacenar, distribuir, y rotar credenciales de forma segura. Herramientas: Vault, AWS Secrets Manager, Azure Key Vault.</dd>
+            
+            <dt>CIA Triad</dt>
+            <dd>Pilares de seguridad de la información: Confidencialidad, Integridad, Disponibilidad (Confidentiality, Integrity, Availability).</dd>
+        </dl>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- FOOTER -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <footer>
+        <p style="margin-top: 30px;">
+            🔒 ¡Misión Cumplida! Has asegurado <strong>Identidad</strong> (JWT), <strong>Transporte</strong> (HTTPS), y <strong>Configuración</strong> (Secretos) de EcoMarket.
+        </p>
+        <p style="font-size: 0.9em; color: #666; margin-top: 10px;">
+            Unidad IV completada. Tu sistema ahora es escalable, distribuido, y seguro.
+        </p>
+        <p>Dr. Eligardo Cruz Sánchez | Programación del Lado del Servidor 2025</p>
+    </footer>
+</body>
+</html>
