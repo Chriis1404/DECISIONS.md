@@ -15,18 +15,18 @@ El sistema opera bajo un modelo **Zero-Trust Network**, donde todo el tráfico e
 
 ```mermaid
 graph TD
-    User((👤 Cliente)) -->|HTTPS / TLS 1.3| Nginx[🔒 Nginx Gateway<br/>(Puerto 443)]
+    User((👤 Cliente)) -->|HTTPS / TLS 1.3| Nginx["🔒 Nginx Gateway<br/>(Puerto 443)"]
 
     subgraph "Red Privada (Docker Cluster)"
-        Nginx -->|Balanceo| Central[🛡️ Central API<br/>(Cluster)]
-
-        Sucursal[🏪 Sucursal Autónoma] -->|AMQP (Ventas)| Rabbit[🐰 RabbitMQ]
+        Nginx -->|Balanceo| Central["🛡️ Central API<br/>(Cluster)"]
+        
+        Sucursal["🏪 Sucursal Autónoma"] -->|AMQP (Ventas)| Rabbit["🐰 RabbitMQ"]
         Sucursal -->|HTTPS (Sync)| Nginx
-
-        Central -->|Persistencia| DB[(🐘 PostgreSQL<br/>Replicado)]
+        
+        Central -->|Persistencia| DB[("🐘 PostgreSQL<br/>Replicado")]
         Central -->|Eventos| Rabbit
-
-        Env[📄 .env] -.->|Inyección de Secretos| Central
+        
+        Env["📄 .env"] -.->|Inyección de Secretos| Central
         Env -.->|Inyección de Secretos| DB
     end
 ```
