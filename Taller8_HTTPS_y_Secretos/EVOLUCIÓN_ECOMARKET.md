@@ -99,12 +99,11 @@ graph LR
     F2 -->|JWT + HTTPS| F3[Fase 3: Seguro]
     
     style F3 fill:#00c853,stroke:#333,stroke-width:2px,color:white
+```
 ---
 
 ### 📂 Archivo 2: `RETO_IA_5_ARQUITECTURA_SEGURIDAD.md`
 *(Este es el archivo nuevo que documenta el diseño de seguridad final. Guárdalo también en la carpeta `Taller8_HTTPS_y_Secretos/`).*
-
-```markdown
 # 🏗️ Reto IA #5: Diseño de Arquitectura de Seguridad Final
 
 **Rol:** Arquitecto de Software  
@@ -129,6 +128,7 @@ graph TD
         SecretFile -.->|Inyecta| DB
         SecretFile -.->|Inyecta| Queue
     end
+```
 2. Decisiones de Diseño Justificadas
 A. SSL Termination en Nginx
 Decisión: Descifrar el tráfico HTTPS en el balanceador de carga (Nginx) y hablar HTTP plano dentro de la red Docker interna.
