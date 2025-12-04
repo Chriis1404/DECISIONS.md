@@ -129,18 +129,18 @@ graph TD
         SecretFile -.->|Inyecta| Queue
     end
 ```
-2. Decisiones de Diseño Justificadas
-A. SSL Termination en Nginx
+## 2. Decisiones de Diseño Justificadas
+# A. SSL Termination en Nginx
 Decisión: Descifrar el tráfico HTTPS en el balanceador de carga (Nginx) y hablar HTTP plano dentro de la red Docker interna.
 
 Por qué: Reduce la carga de CPU en los contenedores de Python (FastAPI), permitiéndoles procesar más ventas por segundo. Simplifica la gestión de certificados al centralizarla en un solo punto de entrada.
 
-B. Secretos en Variables de Entorno
+# B. Secretos en Variables de Entorno
 Decisión: Usar docker-compose con env_file (.env).
 
 Por qué: Es el estándar de la industria para contenedores (metodología 12-Factor App). Evita que las contraseñas queden "quemadas" (hardcoded) en las imágenes de Docker o expuestas en el historial de Git.
 
-C. Autenticación en Capa de Aplicación
+# C. Autenticación en Capa de Aplicación
 Decisión: El middleware de JWT vive en la API (CentralAPI), no en Nginx.
 
 Por qué: Permite una lógica de autorización más fina y granular (roles específicos, permisos por endpoint) que sería muy compleja y rígida de configurar solo en el servidor web Nginx.
