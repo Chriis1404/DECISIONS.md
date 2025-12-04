@@ -1,5 +1,30 @@
-.env
 certs/
+*.pem
+*.key
+*.crt
+.env
+.env.*
+!.env.example
+
+# --- Python ---
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# --- Datos de Docker (NO SUBIR) ---
+primary-data/
+secondary1-data/
+secondary2-data/
+redis_data/
+rabbitmq_data/
+
+# --- Archivos de Sistema e IDE ---
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
