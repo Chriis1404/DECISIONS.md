@@ -49,10 +49,12 @@ docker-compose up -d --build
 
 ---
 
-## 📄 Documentación Extendida
-Para un análisis detallado de la auditoría de seguridad, la arquitectura final y la evolución del proyecto, consultar el informe técnico adjunto:
-
-👉 Ver Informe Técnico Final (Auditoría y Arquitectura)
+### 📚 Documentación Adicional
+- [Diagnóstico de Seguridad Inicial](./DIAGNOSTICO_SEGURIDAD_INICIAL.md)
+- [Auditoría Final y Score](./AUDITORIA_FINAL_HITO_2.md)
+- [Evolución del Proyecto](./EVOLUCION_ECOMARKET.md)
+- [Diseño de Arquitectura Segura](./RETO_IA_5_ARQUITECTURA_SEGURIDAD.md)
+- [🆘 Guía de Solución de Dudas](./GUIA_SOLUCION_DUDAS.md)  <-- NUEVO
 
 ---
 
