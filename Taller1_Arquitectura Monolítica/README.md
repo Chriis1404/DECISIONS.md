@@ -129,6 +129,8 @@ Pensando en una escala real (10,000 productos), el equipo propuso:
 >
 > — Equipo de Desarrollo EcoMarket
 
+# 📂 Código Fuente
+- [main.py](/main.py)
 ---
 
 ### 🎯 Estado del Taller: **✅ Completado**
