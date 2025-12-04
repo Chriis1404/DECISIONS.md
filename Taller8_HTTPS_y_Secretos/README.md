@@ -54,7 +54,7 @@ docker-compose up -d --build
 - [Auditoría Final y Score](./AUDITORIA_FINAL_HITO_2.md)
 - [Evolución del Proyecto](./EVOLUCION_ECOMARKET.md)
 - [Diseño de Arquitectura Segura](./RETO_IA_5_ARQUITECTURA_SEGURIDAD.md)
-- [🆘 Guía de Solución de Dudas](./GUIA_SOLUCION_DUDAS.md)  <-- NUEVO
+- [🆘 Guía de Solución de Dudas](./GUIA_SOLUCION_DUDAS.md)
 
 ---
 
