@@ -48,13 +48,26 @@ docker-compose up -d --build
 **Protección de Secretos:** Inspección del contenedor demuestra que las variables de entorno se inyectaron correctamente sin estar en el Dockerfile.
 
 ---
+## 📚 Documentación y Evidencias del Hito 2
 
-### 📚 Documentación Adicional
-- [Diagnóstico de Seguridad Inicial](./DIAGNOSTICO_SEGURIDAD_INICIAL.md)
-- [Auditoría Final y Score](./AUDITORIA_FINAL_HITO_2.md)
-- [Evolución del Proyecto](./EVOLUCION_ECOMARKET.md)
-- [Diseño de Arquitectura Segura](./RETO_IA_5_ARQUITECTURA_SEGURIDAD.md)
-- [🆘 Guía de Solución de Dudas](./GUIA_SOLUCION_DUDAS.md)
+Este repositorio incluye la documentación completa de todas las actividades, retos de IA y auditorías solicitadas en la guía de aprendizaje.
+
+### 🏗️ Informes Técnicos y Arquitectura
+* [**Evolución del Proyecto (Monolito a Seguro)**](./EVOLUCION_ECOMARKET.md) - Historia técnica de EcoMarket.
+* [**Diseño de Arquitectura Segura (Reto IA #5)**](./RETO_IA_5_ARQUITECTURA_SEGURIDAD.md) - Topología de red y justificación de seguridad.
+* [**Informe de Flujo E2E Seguro**](./INFORME_FLUJO_E2E_SEGURO.md) - Diagramas de secuencia del Login y Validación.
+* [**Conclusión Técnica Final**](./CONCLUSION_INFORME_HITO_2.md) - Análisis de la Tríada CIA y beneficios DevOps.
+
+### 🔍 Auditorías y Diagnósticos
+* [**Diagnóstico de Seguridad Inicial (Reto IA #1)**](./DIAGNOSTICO_SEGURIDAD_INICIAL.md) - Estado vulnerable antes del Taller 8.
+* [**Auditoría de Código Estática**](./AUDITORIA_CODIGO.md) - Búsqueda de secretos hardcodeados (`grep`).
+* [**Auditoría de Configuración de Secretos (Reto IA #3)**](./REPORTE_AUDITORIA_SECRETOS.md) - Validación de `.env` y 12-Factor App.
+* [**Auditoría de Cierre y Score (Reto IA Final)**](./AUDITORIA_FINAL_HITO_2.md) - Evaluación final de seguridad (90/100).
+
+### 🧠 Reflexiones y Guías
+* [**Análisis de Amenazas (Fase 0)**](./REFLEXION_FASE_0.md) - Reflexión sobre GitHub Leaks y ataques MITM.
+* [**Errores Comunes en Gestión de Secretos**](./ERRORES_COMUNES_SECRETOS.md) - Guía de antipatrones evitados.
+* [**🆘 Guía de Solución de Dudas**](./GUIA_SOLUCION_DUDAS.md) - Troubleshooting para certificados y Docker.
 
 ---
 
