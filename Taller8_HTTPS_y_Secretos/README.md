@@ -54,7 +54,6 @@ Este repositorio incluye la documentación completa de todas las actividades, re
 
 ### 🏗️ Informes Técnicos y Arquitectura
 * [**Evolución del Proyecto (Monolito a Seguro)**](https://github.com/Chriis1404/DECISIONS.md/blob/main/Taller8_HTTPS_y_Secretos/EVOLUCI%C3%93N_ECOMARKET.md) - Historia técnica de EcoMarket.
-* [**Diseño de Arquitectura Segura (Reto IA #5)**](./RETO_IA_5_ARQUITECTURA_SEGURIDAD.md) - Topología de red y justificación de seguridad.
 * [**Informe de Flujo E2E Seguro**](./INFORME_FLUJO_E2E_SEGURO.md) - Diagramas de secuencia del Login y Validación.
 * [**Conclusión Técnica Final**](./CONCLUSION_INFORME_HITO_2.md) - Análisis de la Tríada CIA y beneficios DevOps.
 
